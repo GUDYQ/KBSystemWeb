@@ -1,6 +1,6 @@
 package org.example.kbsystemproject.base.mq;
 
-import org.example.kbsystemproject.entity.EventMessage;
+import org.example.kbsystemproject.entity.mq.EventMessage;
 import reactor.core.publisher.Mono;
 
 public interface EventHandler<T> {

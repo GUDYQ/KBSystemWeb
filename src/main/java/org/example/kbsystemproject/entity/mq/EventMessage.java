@@ -1,4 +1,4 @@
-package org.example.kbsystemproject.entity;
+package org.example.kbsystemproject.entity.mq;
 
 import lombok.AllArgsConstructor;
 import lombok.Builder;
