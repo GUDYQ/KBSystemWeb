@@ -20,3 +20,5 @@ public class EventMessage<T> implements Serializable {
     private T payload;
 }
 
+// 不能为基础类
+

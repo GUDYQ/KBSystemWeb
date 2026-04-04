@@ -3,6 +3,7 @@ package org.example.kbsystemproject.controller;
 import lombok.Getter;
 import org.example.kbsystemproject.base.response.ResponseBuilder;
 import org.example.kbsystemproject.base.response.ResponseVO;
+import org.example.kbsystemproject.entity.UserToken;
 import org.example.kbsystemproject.service.FileService;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.web.bind.annotation.GetMapping;
@@ -23,4 +24,12 @@ public class FileController {
         return Mono.just("hello")
                 .map(ResponseBuilder::success);
     }
+
+//    @PostMapping("file/test")
+//    public Mono<ResponseVO<Boolean>> kafkaTest() {
+//        UserToken userToken = UserToken.builder()
+//                .accessToken("11").refreshToken("234").build();
+//        return fileService.product("test-key", "file-uploaded", "file-service", userToken)
+//                .thenReturn(ResponseBuilder.success(Boolean.TRUE));
+//    }
 }

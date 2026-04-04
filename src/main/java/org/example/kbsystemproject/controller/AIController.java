@@ -17,7 +17,7 @@ public class AIController {
 
     @GetMapping(value = "/simple-react", produces = MediaType.TEXT_EVENT_STREAM_VALUE)
     public Flux<ResponseVO<String>> simpleReact(@RequestParam String prompt) {
-        return agentService.chat(prompt)
+        return agentService.chatWithVectorStore(prompt)
                 .map(ResponseBuilder::success);
     }
 }

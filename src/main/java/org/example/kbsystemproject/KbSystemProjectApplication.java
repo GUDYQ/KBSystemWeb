@@ -1,5 +1,6 @@
 package org.example.kbsystemproject;
 
+//import org.springframework.ai.vectorstore.pgvector.PgVectorStore;
 import org.springframework.boot.SpringApplication;
 import org.springframework.boot.autoconfigure.EnableAutoConfiguration;
 import org.springframework.boot.autoconfigure.SpringBootApplication;

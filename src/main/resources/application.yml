@@ -1,10 +1,19 @@
 spring:
   application:
     name: KBSystemProject
+  main:
+    web-application-type: reactive
+  datasource:
+    hikari:
+      jdbc-url: jdbc:postgresql://localhost:5432/knowledge_base
+      username: postgres
+      password: pgvector
+      driver-class-name: org.postgresql.Driver
+
   r2dbc:
     url: r2dbc:postgresql://localhost:5432/knowledge_base
     username: postgres
-    password: postgresql
+    password: pgvector
   config:
     password-key:
       salt-length: 16
@@ -16,13 +25,6 @@ spring:
     redis:
       host: localhost
       port: 6379
-  ai:
-    dashscope:
-      workspace-id: ${AI_WORKSPACE_ID}
-      api-key: ${AI_DASHSCOPE_API_KEY}
-      chat:
-        options:
-          model: qwen-flash
   kafka:
     bootstrap-servers: localhost:9092
     producer:
@@ -35,6 +37,17 @@ spring:
       auto-offset-reset: earliest
       key-deserializer: org.apache.kafka.common.serialization.StringDeserializer
       value-deserializer: org.apache.kafka.common.serialization.StringDeserializer
+  ai:
+    openai:
+      base-url: https://dashscope.aliyuncs.com/compatible-mode
+      api-key: ${AI_DASHSCOPE_API_KEY}
+      chat:
+        options:
+          model: qwen-flash
+      embedding:
+        options:
+          model: text-embedding-v2
+
 app:
   kafka:
     topics:
@@ -52,6 +65,6 @@ app:
 #  bucket-name: ai-learning # 创建的桶名称
 
 server:
-  port: 8080
+  port: 12563
   servlet:
     context-path: /api

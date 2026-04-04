@@ -60,10 +60,7 @@ public class SecurityConfig {
         return httpSecurity.csrf(ServerHttpSecurity.CsrfSpec::disable)
                 .authorizeExchange(authorize ->
                                 authorize.pathMatchers("/api/user/**", "/api/test/**"
-                                    ,       "/api/doc.html",
-                                            "/api/webjars/**",
-                                            "/api/swagger-resources/**",
-                                            "/api/v3/**").permitAll()
+                                    ,       "/api/upload/**").permitAll()
                                         .anyExchange().authenticated())
                 .securityContextRepository(NoOpServerSecurityContextRepository.getInstance())
                 .oauth2ResourceServer(oAuth2 -> oAuth2.jwt(
