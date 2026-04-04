@@ -1,8 +1,11 @@
 package org.example.kbsystemproject.base.ai.agent.tool;
 
+import org.example.kbsystemproject.base.ai.agent.tool.ReactiveTool;
+import org.springaicommunity.mcp.method.tool.utils.JsonSchemaGenerator;
+import org.springframework.ai.openai.api.ResponseFormat;
 import org.springframework.ai.tool.ToolCallback;
 import org.springframework.ai.tool.definition.ToolDefinition;
-import org.springframework.ai.util.json.JsonParser;
+import org.springframework.ai.tool.function.FunctionToolCallback;
 
 public class ReactiveToolAdapter implements ToolCallback {
 
@@ -18,11 +21,13 @@ public class ReactiveToolAdapter implements ToolCallback {
 
     @Override
     public ToolDefinition getToolDefinition() {
-        // 将 ReactiveTool 的元数据转换为 Spring AI 能识别的 ToolDefinition
+        // 直接调用官方的 JsonSchema 工具类生成
+        String schema = JsonSchemaGenerator.generateFromClass(reactiveTool.getInputType());
+
         return ToolDefinition.builder()
                 .name(reactiveTool.getName())
                 .description(reactiveTool.getDescription())
-                .inputSchema(JsonParser.toJson(reactiveTool.getInputType())) // 自动生成 JSON Schema
+                .inputSchema(schema)
                 .build();
     }
 

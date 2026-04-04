@@ -1,5 +1,6 @@
 package org.example.kbsystemproject.base.ai.agent;
 
+import lombok.extern.slf4j.Slf4j;
 import org.example.kbsystemproject.base.ai.agent.*;
 import org.springframework.ai.chat.client.ChatClient;
 import org.springframework.ai.chat.messages.AssistantMessage;
@@ -14,6 +15,7 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 
+@Slf4j
 public abstract class BaseAgent {
 
     protected abstract int getMaxSteps();

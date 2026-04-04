@@ -1,5 +1,6 @@
 package org.example.kbsystemproject.controller;
 
+import org.example.kbsystemproject.base.ai.agent.ReActAgent;
 import org.example.kbsystemproject.base.response.ResponseBuilder;
 import org.example.kbsystemproject.base.response.ResponseVO;
 import org.example.kbsystemproject.service.AgentService;
@@ -17,7 +18,7 @@ public class AIController {
 
     @GetMapping(value = "/simple-react", produces = MediaType.TEXT_EVENT_STREAM_VALUE)
     public Flux<ResponseVO<String>> simpleReact(@RequestParam String prompt) {
-        return agentService.chatWithVectorStore(prompt)
+        return agentService.chatWithAgent(prompt)
                 .map(ResponseBuilder::success);
     }
 }

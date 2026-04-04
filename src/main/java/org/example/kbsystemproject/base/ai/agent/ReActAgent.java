@@ -1,5 +1,6 @@
 package org.example.kbsystemproject.base.ai.agent;
 
+import lombok.extern.slf4j.Slf4j;
 import org.example.kbsystemproject.base.ai.agent.tool.ReactiveTool;
 import org.example.kbsystemproject.base.ai.agent.tool.ReactiveToolRegistry;
 import org.example.kbsystemproject.base.ai.agent.tool.ToolExecutor;
@@ -13,23 +14,26 @@ import reactor.core.publisher.Mono;
 
 import java.util.List;
 
+@Slf4j
 public class ReActAgent extends AbstractChatAgent {
 
     private static final String FINISH_TOOL_NAME = "FinishTaskTool"; // 终止工具的名称
     private final ChatClient chatClient;
     private final ReactiveToolRegistry toolRegistry; // 你的工具执行器
+    private final int maxSteps; // 最大步骤数
 
     public ReActAgent(ChatClient chatClient, List<ReactiveTool> tools, int maxSteps) {
         this.chatClient = chatClient;
         this.toolRegistry = new ReactiveToolRegistry();
         tools.forEach(toolRegistry::register);
+        this.maxSteps = maxSteps;
     }
 
     @Override
-    protected ChatClient getChatClient() { return chatClient; }
+    public ChatClient getChatClient() { return chatClient; }
 
     @Override
-    protected int getMaxSteps() { return 5; }
+    protected int getMaxSteps() { return this.maxSteps; }
 
     /**
      * 核心逻辑：处理思考结果 -> 决策 -> 行动 -> 状态更新
@@ -71,7 +75,7 @@ public class ReActAgent extends AbstractChatAgent {
 
                             if (isTerminalTool) {
                                 // 提取最终结果 (这里简单取最后一个结果，或根据业务逻辑处理)
-                                String lastResult = responses.isEmpty() ? "" : responses.get(responses.size() - 1).responseData();
+                                String lastResult = responses.isEmpty() ? "" : responses.getLast().responseData();
                                 return Flux.just(AgentSignal.event(new AgentEvent(AgentState.FINISHED, lastResult)));
                             } else {
                                 // 5. 生成下一步信号
@@ -84,6 +88,7 @@ public class ReActAgent extends AbstractChatAgent {
             }
 
             case Decision.Continue continueDecision -> {
+                log.info("test_continue_decision: {}", message.getText());
                 // LLM 没调用工具，只说了话，可能是中间思考，推回去继续想
                 AgentContext nextContext = context.appendHistory(message).nextStep();
                 yield Flux.just(

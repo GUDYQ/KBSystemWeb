@@ -1,8 +1,11 @@
 package org.example.kbsystemproject.service;
 
+import lombok.Getter;
 import lombok.extern.slf4j.Slf4j;
+import org.example.kbsystemproject.base.ai.agent.ReActAgent;
 import org.springframework.ai.chat.client.ChatClient;
 import org.springframework.ai.chat.memory.ChatMemory;
+import org.springframework.ai.chat.messages.UserMessage;
 import org.springframework.ai.document.Document;
 //import org.springframework.ai.rag.advisor.RetrievalAugmentationAdvisor;
 import org.springframework.ai.rag.advisor.RetrievalAugmentationAdvisor;
@@ -21,14 +24,18 @@ public class AgentService {
     private static final int MAX_CONTEXT_DOCS = 4;
 
     private final RetrievalAugmentationAdvisor retrievalAugmentationAdvisor;
+    @Getter
     private final ChatClient chatClient;
     private final VectorStore vectorStore;
+    private ReActAgent reActAgent;
+
 
     public AgentService(RetrievalAugmentationAdvisor retrievalAugmentationAdvisor, ChatClient chatClient,
-                        VectorStore vectorStore) {
+                        VectorStore vectorStore, ReActAgent reActAgent) {
         this.retrievalAugmentationAdvisor = retrievalAugmentationAdvisor;
         this.chatClient = chatClient;
         this.vectorStore = vectorStore;
+        this.reActAgent = reActAgent;
     }
 
     public Flux<String> chat(String prompt) {
@@ -42,6 +49,14 @@ public class AgentService {
                 .advisors(retrievalAugmentationAdvisor)
                 .stream()
                 .content();
+    }
+
+    public Flux<String> chatWithAgent(String prompt) {
+        return reActAgent.run(prompt)
+                .map(agentEvent -> {
+                    log.info("Agent Event: {}", agentEvent);
+                    return agentEvent.content();
+                });
     }
 
 }

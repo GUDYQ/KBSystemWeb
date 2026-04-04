@@ -30,24 +30,19 @@ public abstract class AbstractChatAgent extends BaseAgent {
         // 辅助变量：用于累积流式数据
         StreamingAssistantMessageAggregator aggregator = new StreamingAssistantMessageAggregator();
 
-        Flux<ChatResponse> rawStream = getChatClient().prompt()
-                .messages(context.history().toArray(new Message[0]))
+        return getChatClient().prompt()
+                .messages(messages)
                 .stream()
-                .chatResponse();
-        return rawStream
+                .chatResponse()
                 .map(chatResponse -> {
                     AssistantMessage deltaMessage = chatResponse.getResult().getOutput();
-
                     // 1. 喂数据给聚合器 (这是副作用，但不影响主流)
                     aggregator.accumulate(deltaMessage);
+                    return deltaMessage.getText();
 
-                    // 2. 提取增量返回给前端
-                    String deltaText = deltaMessage.getText();
-                    return deltaText == null || deltaText.isEmpty() ? null :
-                            AgentSignal.event(AgentEvent.token(deltaText));
                 })
-                .filter(Objects::nonNull)
-
+                .filter(text -> text != null && !text.isEmpty())
+                .map(text -> AgentSignal.event(AgentEvent.token(text)))
                 // --- 分支流：流结束后的最终处理 ---
                 .concatWith(Flux.defer(() -> {
                     // 此时 ToolCall 的 JSON 碎片已经完美拼装完毕
@@ -71,7 +66,9 @@ public abstract class AbstractChatAgent extends BaseAgent {
                 .doFinally(signalType -> {
                     if (signalType == SignalType.CANCEL) {
                         AssistantMessage partialMessage = aggregator.buildFinalMessage();
-                        log.warn("客户端断开连接，已生成部分内容长度: {}", partialMessage.getText().length());
+                        if (partialMessage.getText() != null) {
+                            log.warn("客户端断开连接，已生成部分内容长度: {}", partialMessage.getText().length());
+                        }
                         // 可选：处理半截消息的逻辑
                     }
                 });
