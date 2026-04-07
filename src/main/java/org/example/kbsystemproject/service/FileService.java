@@ -1,64 +1,102 @@
 package org.example.kbsystemproject.service;
 
-import org.example.kbsystemproject.entity.UserToken;
-import org.example.kbsystemproject.entity.mq.EventMessage;
-import org.example.kbsystemproject.utils.EventMessageJsonUtils;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.beans.factory.annotation.Value;
-import org.springframework.kafka.annotation.KafkaListener;
-import org.springframework.kafka.core.KafkaTemplate;
-import org.springframework.kafka.core.reactive.ReactiveKafkaProducerTemplate;
-import org.springframework.kafka.support.Acknowledgment;
-import org.springframework.kafka.support.SendResult;
 import org.springframework.stereotype.Service;
+import org.springframework.core.io.Resource;
+import org.springframework.core.io.support.ResourcePatternResolver;
+import org.apache.pdfbox.io.RandomAccessReadBuffer;
+import reactor.core.publisher.Flux;
 import reactor.core.publisher.Mono;
+import reactor.core.scheduler.Schedulers;
 
-import java.time.Instant;
-import java.util.UUID;
+import java.io.InputStream;
+import java.io.IOException;
+import java.nio.charset.StandardCharsets;
+import org.apache.pdfbox.Loader;
+import org.apache.pdfbox.pdmodel.PDDocument;
+import org.apache.pdfbox.text.PDFTextStripper;
 
 @Service
 public class FileService {
 
     private static final Logger log = LoggerFactory.getLogger(FileService.class);
 
-//    @Autowired
-//    private ReactiveKafkaProducerTemplate<String, EventMessage<?>> producerTemplate;
-//    @Value("${app.kafka.topics.events}")
-//    private String eventTopic;
-//
-//    @KafkaListener(topics = "${app.kafka.topics.events}", groupId = "${spring.kafka.consumer.group-id}")
-//    public void onEvent(String message, Acknowledgment ack) {
-//        try {
-//            EventMessage eventMessage = EventMessageJsonUtils.fromJson(message, UserToken.class);
-//            log.info("Kafka consumed event: eventId={}, eventType={}, source={}, payload={}",
-//                    eventMessage.getEventId(),
-//                    eventMessage.getEventType(),
-//                    eventMessage.getSource(),
-//                    eventMessage.getPayload());
-//            ack.acknowledge();
-//        } catch (Exception ex) {
-//            log.error("Kafka consumed invalid message: {}", message, ex);
-//        }
-//    }
-//
-//    public <T> Mono<Void> product(String key, String eventType, String source, T payload) {
-//        EventMessage<T> event = EventMessage.<T>builder()
-//                .eventId(UUID.randomUUID().toString())
-//                .eventType(eventType)
-//                .source(source)
-//                .timestamp(Instant.now())
-//                .payload(payload)
-//                .build();
-//
-//        return producerTemplate.send(eventTopic, key, event)
-//                .doOnSuccess(result -> log.info("Kafka produced: topic={}, key={}, partition={}, offset={}",
-//                        eventTopic,
-//                        key,
-//                        result.recordMetadata().partition(),
-//                        result.recordMetadata().offset()))
-//                .doOnError(ex -> log.error("Kafka produce failed: topic={}, key={}", eventTopic, key, ex))
-//                .then();
-//    }
+    private final ResourcePatternResolver resourcePatternResolver;
+
+    @Autowired
+    public FileService(ResourcePatternResolver resourcePatternResolver) {
+        this.resourcePatternResolver = resourcePatternResolver;
+    }
+
+    /**
+     * Test method to load all txt, and pdf files from classpath.
+     */
+    public Flux<String> loadAllTestDocuments() {
+        return Flux.just("classpath:document/*.txt", "classpath:document/*.pdf")
+                .flatMap(pattern -> Mono.fromCallable(() -> resourcePatternResolver.getResources(pattern))
+                        .subscribeOn(Schedulers.boundedElastic()))
+                .flatMap(Flux::fromArray)
+                .flatMap(this::readResourceContent)
+                .onErrorResume(e -> {
+                    log.error("Failed to load generic documents", e);
+                    return Flux.empty();
+                });
+    }
+
+    /**
+     * Reads text content from a resource based on its type asynchronously.
+     * Supports .txt and .pdf files.
+     *
+     * @param resource The resource to read
+     * @return Mono emitting the extracted text content
+     */
+    public Mono<String> readResourceContent(Resource resource) {
+        return Mono.fromCallable(() -> {
+            if (resource == null || !resource.exists()) {
+                throw new IllegalArgumentException("Invalid resource or resource does not exist.");
+            }
+
+            String fileName = resource.getFilename();
+            if (fileName == null) {
+                fileName = "";
+            }
+            fileName = fileName.toLowerCase();
+
+            if (fileName.endsWith(".txt")) {
+                return readTextResource(resource);
+            } else if (fileName.endsWith(".pdf")) {
+                return readPdfResource(resource);
+            } else {
+                throw new IllegalArgumentException("Unsupported file type: " + fileName);
+            }
+        }).subscribeOn(Schedulers.boundedElastic());
+    }
+
+    private String readTextResource(Resource resource) throws IOException {
+        try {
+            return resource.getContentAsString(StandardCharsets.UTF_8);
+        } catch (IOException e) {
+            log.error("Error reading text/md resource: {}", resource.getFilename(), e);
+            throw new IOException("Failed to read text/md resource", e);
+        }
+    }
+
+    private String readPdfResource(Resource resource) throws IOException {
+        try (InputStream is = resource.getInputStream();
+             PDDocument document = Loader.loadPDF(new RandomAccessReadBuffer(is))) {
+
+            if (document.isEncrypted()) {
+                log.warn("PDF resource is encrypted: {}", resource.getFilename());
+                // Depending on requirements, we could attempt to decrypt or throw
+                // throw new IOException("Cannot read encrypted PDF file");
+            }
+            PDFTextStripper stripper = new PDFTextStripper();
+            return stripper.getText(document);
+        } catch (IOException e) {
+            log.error("Error reading pdf resource: {}", resource.getFilename(), e);
+            throw new IOException("Failed to read pdf resource", e);
+        }
+    }
 }

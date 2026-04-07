@@ -48,6 +48,39 @@ spring:
         options:
           model: text-embedding-v2
 
+resilience4j:
+  circuitbreaker:
+    configs:
+      default:
+        # 滑动窗口类型：基于调用次数
+        slidingWindowType: COUNT_BASED
+        # 滑动窗口大小：最近 10 次请求
+        slidingWindowSize: 10
+        # 最小请求次数：达到 5 次才开始计算失败率
+        minimumNumberOfCalls: 5
+        # 失败率阈值：超过 50% 打开熔断
+        failureRateThreshold: 50
+        # 慢调用判定：AI 接口超过 5 秒视为慢调用
+        slowCallDurationThreshold: 5s
+        # 慢调用比例：超过 50% 慢调用打开熔断
+        slowCallRateThreshold: 50
+        # 熔断器打开后等待时间：10秒后进入半开状态尝试探测
+        waitDurationInOpenState: 10s
+        # 半开状态允许的探测请求数
+        permittedNumberOfCallsInHalfOpenState: 3
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info,circuitbreakers
+  endpoint:
+    health:
+      show-details: always
+  health:
+    circuitbreakers:
+      enabled: true
+
 app:
   kafka:
     topics:

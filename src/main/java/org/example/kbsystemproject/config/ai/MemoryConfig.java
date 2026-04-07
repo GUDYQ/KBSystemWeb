@@ -7,6 +7,7 @@ import org.springframework.ai.chat.memory.MessageWindowChatMemory;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 
+// !todo 目前使用内存存储，后续可以替换为数据库存储
 @Configuration
 public class MemoryConfig {
 

@@ -29,7 +29,7 @@ public class VectorStoreConfig {
                 .schemaName("public")
                 .vectorTableName("pgvector_store")
                 .maxDocumentBatchSize(1000)
-                .dimensions(1563)
+                .dimensions(1536)
                 .build();
     }
 }

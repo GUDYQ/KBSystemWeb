@@ -57,14 +57,12 @@ public class ReActAgent extends AbstractChatAgent {
 
                 // A. 执行工具调用
                 List<Mono<ToolResponse>> executionMonos = callTool.calls().stream()
-                        .map(call -> {
-                            return toolRegistry.execute(call.id(), call.name(), context.toToolContext())
-                                    .map(result -> {
-                                        // 【关键】构建 Spring AI 的 ToolResponse 对象
-                                        // 参数：id, name, responseData
-                                        return new ToolResponse(call.id(), call.name(), result);
-                                    });
-                        })
+                        .map(call -> toolRegistry.execute(call.id(), call.name(), context.toToolContext())
+                                .map(result -> {
+                                    // 【关键】构建 Spring AI 的 ToolResponse 对象
+                                    // 参数：id, name, responseData
+                                    return new ToolResponse(call.id(), call.name(), result);
+                                }))
                         .toList();
 
                 yield Flux.merge(executionMonos)

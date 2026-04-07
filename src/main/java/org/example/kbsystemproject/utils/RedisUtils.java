@@ -3,10 +3,14 @@ package org.example.kbsystemproject.utils;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.data.redis.core.ReactiveRedisOperations;
+import org.springframework.data.redis.core.ReactiveRedisTemplate;
+import org.springframework.data.redis.core.script.RedisScript;
 import org.springframework.stereotype.Component;
+import reactor.core.publisher.Flux;
 import reactor.core.publisher.Mono;
 
 import java.time.Duration;
+import java.util.List;
 import java.util.concurrent.TimeUnit;
 
 @Component
@@ -18,9 +22,9 @@ public class RedisUtils {
         }
     }
 
-    @Autowired
     @Qualifier("reactiveRedisTemplate")
-    private ReactiveRedisOperations<String, String> operations;
+    @Autowired
+    private ReactiveRedisTemplate<String, String> operations;
 
     public Mono<String> get(String key) {
         return operations.opsForValue().get(key);

@@ -5,9 +5,12 @@ import org.example.kbsystemproject.base.response.ResponseBuilder;
 import org.example.kbsystemproject.base.response.ResponseVO;
 import org.example.kbsystemproject.service.AgentService;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.beans.factory.annotation.Qualifier;
+import org.springframework.data.redis.core.ReactiveRedisTemplate;
 import org.springframework.http.MediaType;
 import org.springframework.web.bind.annotation.*;
 import reactor.core.publisher.Flux;
+import reactor.core.publisher.Mono;
 
 @RestController
 @RequestMapping("/api/test/ai")
@@ -21,4 +24,17 @@ public class AIController {
         return agentService.chatWithAgent(prompt)
                 .map(ResponseBuilder::success);
     }
+
+    @Qualifier("reactiveStringRedisTemplate")
+    @Autowired
+    private ReactiveRedisTemplate<String, String> redisTemplate;
+
+    @PostMapping("/stop")
+    public Mono<Void> stopGeneration(@RequestParam String sessionId) {
+        String stopChannel = "channel:stop:" + sessionId;
+
+        // 向特定的频道发布停止指令
+        return redisTemplate.convertAndSend(stopChannel, "STOP").then();
+    }
+
 }
