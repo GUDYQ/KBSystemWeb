@@ -32,4 +32,19 @@ public class VectorStoreConfig {
                 .dimensions(1536)
                 .build();
     }
+
+    @Bean
+    @Qualifier("ChatVectorStore")
+    public VectorStore ChatVectorStore(JdbcTemplate jdbcTemplate,
+                                     EmbeddingModel embeddingModel) {
+        return PgVectorStore.builder(jdbcTemplate, embeddingModel)
+                .initializeSchema(true)
+                .distanceType(PgVectorStore.PgDistanceType.COSINE_DISTANCE)
+                .indexType(PgVectorStore.PgIndexType.HNSW)
+                .schemaName("public")
+                .vectorTableName("vector_store_conversation")
+                .maxDocumentBatchSize(1000)
+                .dimensions(1536)
+                .build();
+    }
 }

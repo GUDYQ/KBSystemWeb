@@ -21,8 +21,9 @@ public class FileController {
 
     @GetMapping("test")
     public Mono<ResponseVO<String>> testFile() {
-        return Mono.just("hello")
-                .map(ResponseBuilder::success);
+
+        return fileService.loadAllTestDocuments()
+                .then(Mono.just("hello").map(ResponseBuilder::success));
     }
 
 //    @PostMapping("file/test")

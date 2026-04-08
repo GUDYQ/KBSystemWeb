@@ -65,6 +65,7 @@ public class KnowledgeBaseInitializer implements SmartLifecycle {
             return;
         }
         vectorStore.add(documents);
+
     }
 
     @Override

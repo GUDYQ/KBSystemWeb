@@ -81,6 +81,17 @@ management:
     circuitbreakers:
       enabled: true
 
+memory:
+  short-term:
+    max-turns: 10
+  long-term:
+    top-k: 5
+    similarity-threshold: 0.45
+    time-decay-lambda: 0.03
+  summary:
+    enabled: true
+    trigger-turns: 20
+
 app:
   kafka:
     topics:

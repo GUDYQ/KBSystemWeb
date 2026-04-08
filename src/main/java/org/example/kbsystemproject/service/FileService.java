@@ -34,11 +34,12 @@ public class FileService {
      * Test method to load all txt, and pdf files from classpath.
      */
     public Flux<String> loadAllTestDocuments() {
-        return Flux.just("classpath:document/*.txt", "classpath:document/*.pdf")
+        return Flux.just("classpath:document/*.md", "classpath:document/*.txt", "classpath:document/*.pdf")
                 .flatMap(pattern -> Mono.fromCallable(() -> resourcePatternResolver.getResources(pattern))
                         .subscribeOn(Schedulers.boundedElastic()))
                 .flatMap(Flux::fromArray)
                 .flatMap(this::readResourceContent)
+                .doOnNext(content -> log.info("Successfully loaded document with length: {}", content.length()))
                 .onErrorResume(e -> {
                     log.error("Failed to load generic documents", e);
                     return Flux.empty();
@@ -47,7 +48,7 @@ public class FileService {
 
     /**
      * Reads text content from a resource based on its type asynchronously.
-     * Supports .txt and .pdf files.
+     * Supports .md, .txt and .pdf files.
      *
      * @param resource The resource to read
      * @return Mono emitting the extracted text content
@@ -59,12 +60,13 @@ public class FileService {
             }
 
             String fileName = resource.getFilename();
+            log.info("Starting to read file: {}", fileName);
             if (fileName == null) {
                 fileName = "";
             }
             fileName = fileName.toLowerCase();
 
-            if (fileName.endsWith(".txt")) {
+            if (fileName.endsWith(".txt") || fileName.endsWith(".md")) {
                 return readTextResource(resource);
             } else if (fileName.endsWith(".pdf")) {
                 return readPdfResource(resource);
