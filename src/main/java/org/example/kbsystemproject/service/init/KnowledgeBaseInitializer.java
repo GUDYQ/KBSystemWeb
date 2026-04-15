@@ -46,12 +46,11 @@ public class KnowledgeBaseInitializer implements SmartLifecycle {
 //                    }
 //                    return mdFileLoader.loadMarkdowns()
 //                            .collectList()
-//                            .doOnNext(localTokenTextSplit::splitMarkdownDocument)
 //                            .publishOn(Schedulers.boundedElastic())
 //                            .doOnNext(this::saveDocuments)
 //                            .then();
 //                })
-//                .doOnSubscribe(sub -> log.info("开始初始化本地知识库"))
+//                .doOnSubscribe(sub -> log.info("开始初始化本地知识库 (父子块模式)"))
 //                .doOnSuccess(v -> log.info("本地知识库初始化完成"))
 //                .doOnError(e -> {
 //                    initialized.set(false);
@@ -91,4 +90,3 @@ public class KnowledgeBaseInitializer implements SmartLifecycle {
         return isRunning;
     }
 }
-

@@ -2,6 +2,7 @@ package org.example.kbsystemproject.base.ai.agent.tool;
 
 import org.springframework.ai.chat.model.ToolContext;
 import org.springframework.ai.tool.ToolCallback;
+import org.springframework.ai.tool.function.FunctionToolCallback;
 import reactor.core.publisher.Mono;
 import java.util.*;
 import java.util.concurrent.ConcurrentHashMap;
@@ -13,7 +14,6 @@ public class ReactiveToolRegistry {
 
     public void register(ReactiveTool tool) {
         tools.put(tool.getName(), tool);
-        callbacks.add(new ReactiveToolAdapter(tool));
     }
 
     /**

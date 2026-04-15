@@ -30,7 +30,10 @@ public class ReActAgent extends AbstractChatAgent {
     }
 
     @Override
-    public ChatClient getChatClient() { return chatClient; }
+    public ChatClient getChatClient() {
+        // 关键：将工具适配器注册到 ChatClient 中
+        return chatClient;
+    }
 
     @Override
     protected int getMaxSteps() { return this.maxSteps; }
@@ -47,6 +50,7 @@ public class ReActAgent extends AbstractChatAgent {
         // 2. 执行决策
         return switch (decision) {
             case Decision.CallTool callTool -> {
+                log.info("Tool use");
                 AgentContext currentContext = context
                         .appendHistory(message)
                         .nextStep();
@@ -57,7 +61,11 @@ public class ReActAgent extends AbstractChatAgent {
 
                 // A. 执行工具调用
                 List<Mono<ToolResponse>> executionMonos = callTool.calls().stream()
-                        .map(call -> toolRegistry.execute(call.id(), call.name(), context.toToolContext())
+                        .map(call -> toolRegistry.execute(call.name(), call.arguments(), context.toToolContext())
+                                // 规范：无论外部工具实现写得多糟糕（是否不小心写了阻塞），
+                                // 统一转交到 BaseAgent 暴露出来的 Agent 专属隔离线程池(ai-agent-pool)执行，
+                                // 最大化并发时不会占用 WebFlux 的全局 default pool。
+                                .subscribeOn(this.getScheduler())
                                 .map(result -> {
                                     // 【关键】构建 Spring AI 的 ToolResponse 对象
                                     // 参数：id, name, responseData

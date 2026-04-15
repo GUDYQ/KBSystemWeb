@@ -7,8 +7,10 @@ import org.example.kbsystemproject.service.ConversationService;
 import org.example.kbsystemproject.service.component.RedisShortTermMemory;
 import org.springframework.ai.chat.client.ChatClientRequest;
 import org.springframework.ai.chat.messages.*;
+import org.springframework.ai.chat.model.ChatModel;
 import org.springframework.ai.chat.prompt.Prompt;
 import org.springframework.ai.embedding.EmbeddingModel;
+import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.stereotype.Component;
 
 import java.util.*;
@@ -20,7 +22,7 @@ public class MemoryInboundContextBuilder {
     private final RedisShortTermMemory redisMemory;
     private final ConversationMemoryService memoryService;
     private final CompressionDecider compressionDecider;
-    private final org.springframework.ai.chat.model.ChatModel rawChatModel;
+    private final ChatModel rawChatModel;
     private final EmbeddingModel embeddingModel;
     private final ObjectMapper objectMapper;
 
@@ -28,7 +30,7 @@ public class MemoryInboundContextBuilder {
                                        RedisShortTermMemory redisMemory,
                                        ConversationMemoryService memoryService,
                                        CompressionDecider compressionDecider,
-                                       org.springframework.ai.chat.model.ChatModel rawChatModel,
+                                       ChatModel rawChatModel,
                                        EmbeddingModel embeddingModel,
                                        ObjectMapper objectMapper) {
         this.stateService = stateService;

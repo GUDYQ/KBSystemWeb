@@ -32,7 +32,6 @@ public class StreamingAssistantMessageAggregator {
         mediaList.addAll(chunk.getMedia()); // synchronizedList.addAll 本身安全
 
         for (ToolCall toolCall : chunk.getToolCalls()) {
-            if (toolCall.id().isBlank()) continue;
 
             toolCallBuffers
                     .computeIfAbsent(toolCall.id(), id ->

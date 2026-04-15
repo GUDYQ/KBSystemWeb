@@ -9,6 +9,8 @@ import org.springframework.ai.chat.messages.UserMessage;
 import org.springframework.ai.chat.model.ChatResponse;
 import reactor.core.publisher.Flux;
 import reactor.core.publisher.Mono;
+import reactor.core.scheduler.Scheduler;
+import reactor.core.scheduler.Schedulers;
 
 import java.util.Collections;
 import java.util.HashMap;
@@ -18,11 +20,26 @@ import java.util.Map;
 @Slf4j
 public abstract class BaseAgent {
 
+    // 将刚才我们在 Service 中定义的隔离线程池下沉到 BaseAgent，作为统一的 Agent 运转专有池
+    private final Scheduler agentScheduler = Schedulers.newBoundedElastic(100, 10000, "ai-agent-pool");
+
+    // 暴露给外部或者子类使用
+    public Scheduler getScheduler() {
+        return agentScheduler;
+    }
+
     protected abstract int getMaxSteps();
 
     public Flux<AgentEvent> run(String userPrompt, Map<String, Object> businessContext) {
+        return run(Collections.emptyList(), userPrompt, businessContext);
+    }
+
+    public Flux<AgentEvent> run(List<Message> history, String userPrompt, Map<String, Object> businessContext) {
+        List<Message> allMessages = new java.util.ArrayList<>(history);
+        allMessages.add(new UserMessage(userPrompt));
+
         AgentContext initialContext = new AgentContext(
-                List.of(new UserMessage(userPrompt)),
+                Collections.unmodifiableList(allMessages),
                 0,
                 businessContext // 显式存入
         );
@@ -37,12 +54,19 @@ public abstract class BaseAgent {
                     }
                     return Flux.empty();
                 })
+                // 规范：整个 Agent 内部运转逻辑强制与外层解耦
+                // 统一使用 Agent 专属池，防堵塞全局
+                .subscribeOn(this.agentScheduler)
                 .ofType(AgentSignal.Event.class)
                 .map(AgentSignal.Event::event);
     }
 
     public Flux<AgentEvent> run(String userPrompt) {
-        return run(userPrompt, Collections.emptyMap());
+        return run(Collections.emptyList(), userPrompt, Collections.emptyMap());
+    }
+
+    public Flux<AgentEvent> run(List<Message> history, String userPrompt) {
+        return run(history, userPrompt, Collections.emptyMap());
     }
 
     /**

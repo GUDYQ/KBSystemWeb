@@ -25,6 +25,24 @@ public class AIController {
                 .map(ResponseBuilder::success);
     }
 
+    @PostMapping("/chat/start")
+    public Mono<ResponseVO<String>> startChatBackground(@RequestParam String sessionId, @RequestParam String prompt) {
+        agentService.startAgentChatBackground(sessionId, prompt);
+        return Mono.just(ResponseBuilder.success("Agent task started in background."));
+    }
+
+    @GetMapping(value = "/chat/stream", produces = MediaType.TEXT_EVENT_STREAM_VALUE)
+    public Flux<ResponseVO<String>> getChatStream(@RequestParam String sessionId) {
+        return agentService.getSessionLiveStream(sessionId)
+                .map(ResponseBuilder::success);
+    }
+
+    @GetMapping(value = "/chat", produces = MediaType.TEXT_EVENT_STREAM_VALUE)
+    public Flux<ResponseVO<String>> chat(@RequestParam String prompt) {
+        return agentService.chat(prompt)
+                .map(ResponseBuilder::success);
+    }
+
     @Qualifier("reactiveStringRedisTemplate")
     @Autowired
     private ReactiveRedisTemplate<String, String> redisTemplate;

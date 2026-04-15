@@ -1,6 +1,12 @@
 package org.example.kbsystemproject.config.ai;
 
+import com.knuddels.jtokkit.api.EncodingType;
+import org.springframework.ai.embedding.BatchingStrategy;
 import org.springframework.ai.embedding.EmbeddingModel;
+import org.springframework.ai.embedding.TokenCountBatchingStrategy;
+import org.springframework.ai.model.ollama.autoconfigure.OllamaConnectionDetails;
+import org.springframework.ai.ollama.OllamaEmbeddingModel;
+import org.springframework.ai.ollama.api.OllamaEmbeddingOptions;
 import org.springframework.ai.vectorstore.SimpleVectorStore;
 import org.springframework.ai.vectorstore.VectorStore;
 //import org.springframework.ai.vectorstore.pgvector.PgVectorStore;
@@ -29,13 +35,13 @@ public class VectorStoreConfig {
                 .schemaName("public")
                 .vectorTableName("pgvector_store")
                 .maxDocumentBatchSize(1000)
-                .dimensions(1536)
+                .dimensions(768)
                 .build();
     }
 
     @Bean
     @Qualifier("ChatVectorStore")
-    public VectorStore ChatVectorStore(JdbcTemplate jdbcTemplate,
+    public VectorStore chatVectorStore(JdbcTemplate jdbcTemplate,
                                      EmbeddingModel embeddingModel) {
         return PgVectorStore.builder(jdbcTemplate, embeddingModel)
                 .initializeSchema(true)
@@ -44,7 +50,7 @@ public class VectorStoreConfig {
                 .schemaName("public")
                 .vectorTableName("vector_store_conversation")
                 .maxDocumentBatchSize(1000)
-                .dimensions(1536)
+                .dimensions(768)
                 .build();
     }
 }

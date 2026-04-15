@@ -36,8 +36,10 @@ public abstract class AbstractChatAgent extends BaseAgent {
                 .chatResponse()
                 .map(chatResponse -> {
                     AssistantMessage deltaMessage = chatResponse.getResult().getOutput();
+//                    log.info(chatResponse.toString());
                     // 1. 喂数据给聚合器 (这是副作用，但不影响主流)
                     aggregator.accumulate(deltaMessage);
+//                    log.info(String.valueOf(deltaMessage.hasToolCalls()));
                     return deltaMessage.getText();
 
                 })
