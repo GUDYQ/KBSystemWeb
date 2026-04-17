@@ -60,6 +60,18 @@ public class PERAgent extends AbstractChatAgent {
         this.maxSteps = maxSteps;
     }
 
+    public PERAgent(ChatClient chatClient, List<ReactiveTool> tools, List<org.springframework.ai.tool.ToolCallback> mcpTools, int maxSteps) {
+        this.chatClient = chatClient;
+        this.toolRegistry = new ReactiveToolRegistry();
+        if (tools != null) {
+            tools.forEach(this.toolRegistry::register);
+        }
+        if (mcpTools != null) {
+            mcpTools.forEach(this.toolRegistry::register);
+        }
+        this.maxSteps = maxSteps;
+    }
+
     @Override
     protected ChatClient getChatClient() {
         return chatClient;

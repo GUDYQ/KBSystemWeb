@@ -3,8 +3,6 @@
     "PaddleOCR-VL": {
       "command": "uvx",
       "args": [
-        "/c",
-        "uvx",
         "--from",
         "paddleocr-mcp",
         "paddleocr_mcp"

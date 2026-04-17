@@ -8,8 +8,10 @@ import org.springframework.ai.chat.client.ChatClient;
 import org.springframework.ai.chat.memory.ChatMemory;
 import org.springframework.ai.chat.messages.Message;
 import org.springframework.ai.chat.messages.UserMessage;
+import org.springframework.ai.chat.prompt.ChatOptions;
 import org.springframework.ai.document.Document;
 //import org.springframework.ai.rag.advisor.RetrievalAugmentationAdvisor;
+import org.springframework.ai.openai.OpenAiChatOptions;
 import org.springframework.ai.rag.advisor.RetrievalAugmentationAdvisor;
 import org.springframework.ai.vectorstore.SearchRequest;
 import org.springframework.ai.vectorstore.VectorStore;
@@ -86,7 +88,7 @@ public class AgentService {
                 .content();
     }
 
-    public Flux<String> chatWithVectorStore(String prompt) {
+    public Flux<String> chatTest(String prompt) {
         return chatClient.prompt(prompt)
                 .stream()
                 .content();

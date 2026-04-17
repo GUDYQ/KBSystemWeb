@@ -14,6 +14,32 @@ public class ReactiveToolRegistry {
 
     public void register(ReactiveTool tool) {
         tools.put(tool.getName(), tool);
+        callbacks.add(new ReactiveToolAdapter(tool));
+    }
+
+    public void register(ToolCallback callback) {
+        callbacks.add(callback);
+        tools.put(callback.getToolDefinition().name(), new ReactiveTool() {
+            @Override
+            public String getName() {
+                return callback.getToolDefinition().name();
+            }
+
+            @Override
+            public String getDescription() {
+                return callback.getToolDefinition().description();
+            }
+
+            @Override
+            public Class<?> getInputType() {
+                return String.class; // fallback as schema is driven by toolCallback itself
+            }
+
+            @Override
+            public Mono<String> execute(String toolInput, ToolContext context) {
+                return Mono.fromCallable(() -> callback.call(toolInput));
+            }
+        });
     }
 
     /**

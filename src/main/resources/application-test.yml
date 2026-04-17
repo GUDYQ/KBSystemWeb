@@ -1,0 +1,10 @@
+spring:
+  ai:
+    ollama:
+      base-url: http://localhost:11434
+      chat:
+        options:
+          model: gemma4:e4b
+      embedding:
+        model: nomic-embed-text-v2-moe
+        dimension: 768

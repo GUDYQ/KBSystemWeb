@@ -9,6 +9,7 @@ import org.springframework.ai.chat.messages.AssistantMessage;
 import org.springframework.ai.chat.messages.ToolResponseMessage;
 import org.springframework.ai.chat.messages.ToolResponseMessage.ToolResponse;
 import org.springframework.ai.chat.messages.UserMessage;
+import org.springframework.ai.tool.ToolCallback;
 import reactor.core.publisher.Flux;
 import reactor.core.publisher.Mono;
 
@@ -26,6 +27,18 @@ public class ReActAgent extends AbstractChatAgent {
         this.chatClient = chatClient;
         this.toolRegistry = new ReactiveToolRegistry();
         tools.forEach(toolRegistry::register);
+        this.maxSteps = maxSteps;
+    }
+
+    public ReActAgent(ChatClient chatClient, List<ReactiveTool> tools, List<ToolCallback> mcpTools, int maxSteps) {
+        this.chatClient = chatClient;
+        this.toolRegistry = new ReactiveToolRegistry();
+        if (tools != null) {
+            tools.forEach(toolRegistry::register);
+        }
+        if (mcpTools != null) {
+            mcpTools.forEach(toolRegistry::register);
+        }
         this.maxSteps = maxSteps;
     }
 
