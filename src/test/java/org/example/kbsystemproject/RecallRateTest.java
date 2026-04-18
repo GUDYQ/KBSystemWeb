@@ -1,21 +1,19 @@
 package org.example.kbsystemproject;
 
-import org.example.kbsystemproject.service.AgentService;
+import org.example.kbsystemproject.ailearning.application.service.AiLearningApplicationService;
 import org.junit.jupiter.api.Test;
 import org.springframework.ai.document.Document;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
-import reactor.core.publisher.Flux;
 
 import java.util.Arrays;
 import java.util.List;
-import java.util.Map;
 
 @SpringBootTest
 public class RecallRateTest {
 
     @Autowired
-    private AgentService agentService;
+    private AiLearningApplicationService aiLearningApplicationService;
 
     @Test
     public void testRecallRate() {
@@ -36,7 +34,7 @@ public class RecallRateTest {
             String expectedFile = testCase.expectedFile;
 
             // Using blockLast to gather all results from Flux correctly for a test
-            List<Document> results = agentService.searchSimilarity(question).collectList().block();
+            List<Document> results = aiLearningApplicationService.searchSimilarity(question).collectList().block();
 
             boolean hit = false;
             if (results != null) {

@@ -25,6 +25,7 @@ spring:
     redis:
       host: localhost
       port: 6379
+      password: redis
   kafka:
     bootstrap-servers: localhost:9092
     producer:
@@ -99,6 +100,7 @@ management:
 memory:
   short-term:
     max-turns: 10
+    ttl-hours: 72
   long-term:
     top-k: 5
     similarity-threshold: 0.45
@@ -106,6 +108,10 @@ memory:
   summary:
     enabled: true
     trigger-turns: 20
+  concurrency:
+    enabled: true
+    lock-wait-millis: 3000
+    lock-lease-millis: 15000
 
   kafka:
     topics:

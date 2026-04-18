@@ -1,24 +1,21 @@
 package org.example.kbsystemproject.config.ai;
 
-import org.example.kbsystemproject.base.ai.agent.ReActAgent;
-import org.example.kbsystemproject.base.ai.agent.tool.ReactiveTool;
-import org.example.kbsystemproject.base.ai.agent.tool.ReactiveToolAdapter;
-import org.example.kbsystemproject.base.ai.agent.tool.impl.WeatherReactiveTool;
-import org.example.kbsystemproject.base.ai.agent.tool.impl.WebSearchReactiveTool;
-import org.example.kbsystemproject.service.component.FinishTool;
+import org.example.kbsystemproject.ailearning.agent.ReActAgent;
+import org.example.kbsystemproject.ailearning.interfaces.adapter.ReactiveToolAdapter;
+import org.example.kbsystemproject.ailearning.tool.WeatherReactiveTool;
+import org.example.kbsystemproject.ailearning.tool.WebSearchReactiveTool;
+import org.example.kbsystemproject.ailearning.tool.FinishTool;
 import org.springframework.ai.chat.client.ChatClient;
 import org.springframework.ai.chat.model.ChatModel;
-import org.springframework.ai.mcp.SyncMcpToolCallbackProvider;
+import org.springframework.ai.mcp.AsyncMcpToolCallbackProvider;
 import org.springframework.ai.openai.OpenAiChatOptions;
 import org.springframework.ai.tool.ToolCallback;
-import org.springframework.ai.tool.function.FunctionToolCallback;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.context.annotation.Primary;
 
 import java.util.ArrayList;
-import java.util.Arrays;
 import java.util.Collections;
 import java.util.List;
 import java.util.function.Function;
@@ -36,7 +33,7 @@ public class ModelConfig {
     private FinishTool finishTool;
 
     @Autowired(required = false)
-    private SyncMcpToolCallbackProvider mcpToolCallbackProvider;
+    private AsyncMcpToolCallbackProvider mcpToolCallbackProvider;
 
     public static class CalculatorTool implements Function<CalculatorTool.Request, CalculatorTool.Response> {
         public record Request(int a, int b) {}
@@ -92,13 +89,12 @@ public class ModelConfig {
 
     @Bean
     public ReActAgent reActAgent(ChatClient chatClient) {
-//        List<org.springframework.ai.tool.ToolCallback> mcpTools =
-//            toolCallbackProvider != null ? List.of(toolCallbackProvider.getToolCallbacks()) : null;
-
+        List<ToolCallback> mcpTools = mcpToolCallbackProvider != null
+                ? List.of(mcpToolCallbackProvider.getToolCallbacks())
+                : List.of();
         return new ReActAgent(chatClient,
-            List.of(weatherReactiveTool, finishTool),
-               List.of(mcpToolCallbackProvider.getToolCallbacks()),
-//            mcpTools,
-            3);
+                List.of(weatherReactiveTool, webSearchReactiveTool, finishTool),
+                mcpTools,
+                3);
     }
 }

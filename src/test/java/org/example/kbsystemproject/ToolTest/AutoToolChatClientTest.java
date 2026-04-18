@@ -1,8 +1,5 @@
 package org.example.kbsystemproject.ToolTest;
 
-import org.example.kbsystemproject.base.ai.agent.tool.ReactiveToolAdapter;
-import org.example.kbsystemproject.base.ai.agent.tool.impl.WeatherReactiveTool;
-import org.example.kbsystemproject.base.ai.agent.tool.impl.WebSearchReactiveTool;
 import org.junit.jupiter.api.Test;
 import org.springframework.ai.chat.client.ChatClient;
 import org.springframework.ai.chat.model.ChatModel;
@@ -13,7 +10,6 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
-import org.springframework.test.context.ActiveProfiles;
 import org.springframework.test.context.DynamicPropertyRegistry;
 import org.springframework.test.context.DynamicPropertySource;
 

@@ -1,36 +1,32 @@
 package org.example.kbsystemproject.controller;
 
-import org.example.kbsystemproject.T2test.RecallEvaluator;
-import org.example.kbsystemproject.T2test.RecallTestCase;
-import org.example.kbsystemproject.T2test.T2RecallTestCaseBuilder;
+import org.example.kbsystemproject.ailearning.application.service.AiLearningApplicationService;
+import org.example.kbsystemproject.ailearning.evaluation.retrieval.RecallEvaluator;
+import org.example.kbsystemproject.ailearning.evaluation.retrieval.T2RecallTestCaseBuilder;
 import org.example.kbsystemproject.base.response.ResponseBuilder;
 import org.example.kbsystemproject.base.response.ResponseVO;
-import org.example.kbsystemproject.service.AgentService;
-import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.ai.document.Document;
 import org.springframework.http.MediaType;
 import org.springframework.web.bind.annotation.*;
 import reactor.core.publisher.Flux;
 import reactor.core.publisher.Mono;
 
-import org.springframework.ai.document.Document;
-
-import java.util.List;
 import java.util.Map;
 
 @RestController
 @RequestMapping("/api/test")
 public class TestController {
 
-    private final AgentService agentService;
+    private final AiLearningApplicationService aiLearningApplicationService;
     private final RecallEvaluator recallEvaluator;
     private final T2RecallTestCaseBuilder testCaseBuilder;
 
-
-    public TestController(AgentService agentService, RecallEvaluator recallEvaluator,
-                          T2RecallTestCaseBuilder testCaseBuilder, RecallEvaluator recallEvaluator1, T2RecallTestCaseBuilder testCaseBuilder1) {
-        this.agentService = agentService;
-        this.recallEvaluator = recallEvaluator1;
-        this.testCaseBuilder = testCaseBuilder1;
+    public TestController(AiLearningApplicationService aiLearningApplicationService,
+                          RecallEvaluator recallEvaluator,
+                          T2RecallTestCaseBuilder testCaseBuilder) {
+        this.aiLearningApplicationService = aiLearningApplicationService;
+        this.recallEvaluator = recallEvaluator;
+        this.testCaseBuilder = testCaseBuilder;
     }
 
     @GetMapping("/hello")
@@ -40,14 +36,14 @@ public class TestController {
 
     @GetMapping(value = "/chat", produces = MediaType.TEXT_EVENT_STREAM_VALUE)
     public Flux<ResponseVO<String>> chat(@RequestParam String prompt) {
-        return agentService.chatTest(prompt)
+        return aiLearningApplicationService.chatTest(prompt)
                 .map(ResponseBuilder::success);
     }
 
     @PostMapping("/ai/search")
     public Flux<ResponseVO<Map<String, Object>>> aiSearch(@RequestBody Map<String, String> payload) {
         String query = payload.get("query");
-        return agentService.searchSimilarity(query)
+        return aiLearningApplicationService.searchSimilarity(query)
                 .map(doc -> {
                     Map<String, Object> map = new java.util.HashMap<>();
                     map.put("id", doc.getId());
@@ -80,5 +76,4 @@ public class TestController {
                 .map(RecallEvaluator.RecallReport::getAvgRecall)
                 .map(ResponseBuilder::success);
     }
-
 }

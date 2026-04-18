@@ -73,7 +73,7 @@ dependencies {
     implementation 'org.springframework.boot:spring-boot-starter-data-redis-reactive'
     implementation 'org.springframework.boot:spring-boot-starter-oauth2-resource-server'
 
-//    implementation 'org.redisson:redisson-spring-boot-starter:3.52.0'
+    implementation 'org.redisson:redisson-spring-boot-starter:3.52.0'
     implementation 'org.springframework.boot:spring-boot-starter-jdbc'
     implementation 'net.sourceforge.tess4j:tess4j:5.18.0'
 //    implementation "org.apache.tika:tika-core:${tikaVersion}"

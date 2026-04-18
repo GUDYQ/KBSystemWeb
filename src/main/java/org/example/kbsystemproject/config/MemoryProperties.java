@@ -12,10 +12,12 @@ public class MemoryProperties {
     private ShortTerm shortTerm = new ShortTerm();
     private LongTerm longTerm = new LongTerm();
     private Summary summary = new Summary();
+    private Concurrency concurrency = new Concurrency();
 
     @Data
     public static class ShortTerm {
         private int maxTurns = 10;
+        private long ttlHours = 72;
     }
 
     @Data
@@ -29,5 +31,12 @@ public class MemoryProperties {
     public static class Summary {
         private boolean enabled = true;
         private int triggerTurns = 20;
+    }
+
+    @Data
+    public static class Concurrency {
+        private boolean enabled = true;
+        private long lockWaitMillis = 3000;
+        private long lockLeaseMillis = 15000;
     }
 }

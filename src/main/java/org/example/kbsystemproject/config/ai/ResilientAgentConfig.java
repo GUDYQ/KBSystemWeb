@@ -2,7 +2,7 @@ package org.example.kbsystemproject.config.ai;
 
 import io.github.resilience4j.circuitbreaker.CircuitBreaker;
 import io.github.resilience4j.circuitbreaker.CircuitBreakerConfig;
-import org.example.kbsystemproject.base.ai.ResilientAgentWrapper;
+import org.example.kbsystemproject.ailearning.agent.ResilientAgentWrapper;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 
