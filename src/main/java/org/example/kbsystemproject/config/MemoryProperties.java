@@ -13,6 +13,8 @@ public class MemoryProperties {
     private LongTerm longTerm = new LongTerm();
     private Summary summary = new Summary();
     private Concurrency concurrency = new Concurrency();
+    private Request request = new Request();
+    private Async async = new Async();
 
     @Data
     public static class ShortTerm {
@@ -38,5 +40,18 @@ public class MemoryProperties {
         private boolean enabled = true;
         private long lockWaitMillis = 3000;
         private long lockLeaseMillis = 15000;
+    }
+
+    @Data
+    public static class Request {
+        private long processingLeaseSeconds = 600;
+    }
+
+    @Data
+    public static class Async {
+        private long fixedDelayMillis = 3000;
+        private int batchSize = 20;
+        private long leaseSeconds = 120;
+        private long retryDelaySeconds = 30;
     }
 }

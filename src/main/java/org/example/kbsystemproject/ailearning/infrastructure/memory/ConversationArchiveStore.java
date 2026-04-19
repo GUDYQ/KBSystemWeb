@@ -190,6 +190,8 @@ public class ConversationArchiveStore {
                                     :content, CAST(:metadata AS jsonb), :conversationId, :memoryType,
                                     CAST(:embedding AS vector), :createdAt, :turnIndex, :messageIndex
                                 )
+                                ON CONFLICT (conversation_id, turn_index, message_index)
+                                DO NOTHING
                                 """)
                                 .bind("content", turn.content())
                                 .bind("metadata", metadataJson)

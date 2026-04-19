@@ -8,6 +8,9 @@ import org.example.kbsystemproject.ailearning.domain.session.SessionMemorySnapsh
 import org.example.kbsystemproject.ailearning.domain.session.SessionTurnPair;
 import org.example.kbsystemproject.ailearning.infrastructure.memory.ConversationArchiveStore;
 import org.example.kbsystemproject.ailearning.infrastructure.memory.RedisShortTermMemoryStore;
+import org.example.kbsystemproject.ailearning.infrastructure.persistence.session.LearningSessionMemoryTaskStore;
+import org.example.kbsystemproject.ailearning.infrastructure.persistence.session.LearningSessionMessageStore;
+import org.example.kbsystemproject.ailearning.infrastructure.persistence.session.LearningSessionRequestStore;
 import org.example.kbsystemproject.ailearning.infrastructure.persistence.session.LearningSessionStore;
 import org.example.kbsystemproject.config.MemoryProperties;
 import org.springframework.ai.chat.client.ChatClient;
@@ -28,6 +31,9 @@ import java.util.Map;
 public class SessionStorageService {
 
     private final LearningSessionStore learningSessionStore;
+    private final LearningSessionRequestStore learningSessionRequestStore;
+    private final LearningSessionMessageStore learningSessionMessageStore;
+    private final LearningSessionMemoryTaskStore learningSessionMemoryTaskStore;
     private final RedisShortTermMemoryStore shortTermMemoryStore;
     private final ConversationArchiveStore conversationArchiveStore;
     private final EmbeddingModel embeddingModel;
@@ -38,6 +44,9 @@ public class SessionStorageService {
     private final SessionLockService sessionLockService;
 
     public SessionStorageService(LearningSessionStore learningSessionStore,
+                                 LearningSessionRequestStore learningSessionRequestStore,
+                                 LearningSessionMessageStore learningSessionMessageStore,
+                                 LearningSessionMemoryTaskStore learningSessionMemoryTaskStore,
                                  RedisShortTermMemoryStore shortTermMemoryStore,
                                  ConversationArchiveStore conversationArchiveStore,
                                  EmbeddingModel embeddingModel,
@@ -47,6 +56,9 @@ public class SessionStorageService {
                                  TransactionalOperator transactionalOperator,
                                  SessionLockService sessionLockService) {
         this.learningSessionStore = learningSessionStore;
+        this.learningSessionRequestStore = learningSessionRequestStore;
+        this.learningSessionMessageStore = learningSessionMessageStore;
+        this.learningSessionMemoryTaskStore = learningSessionMemoryTaskStore;
         this.shortTermMemoryStore = shortTermMemoryStore;
         this.conversationArchiveStore = conversationArchiveStore;
         this.embeddingModel = embeddingModel;
@@ -69,10 +81,11 @@ public class SessionStorageService {
     }
 
     public Mono<Void> appendTurn(String conversationId,
+                                 String requestId,
                                  SessionTurnPair turnPair,
                                  String currentTopic,
                                  Map<String, Object> sessionMetadata) {
-        return sessionLockService.execute(conversationId, () -> appendTurnInternal(conversationId, turnPair, currentTopic, sessionMetadata));
+        return sessionLockService.execute(conversationId, () -> appendTurnInternal(conversationId, requestId, turnPair, currentTopic, sessionMetadata));
     }
 
     public Mono<Void> archiveSummary(String conversationId, String summary, Map<String, Object> metadata) {
@@ -134,46 +147,46 @@ public class SessionStorageService {
                 .then();
     }
 
+    public Mono<List<ConversationTurn>> loadTurnsByTurnRange(String conversationId, int startTurnInclusive, int endTurnInclusive) {
+        return learningSessionMessageStore.loadTurnsByTurnRange(conversationId, startTurnInclusive, endTurnInclusive);
+    }
+
     private Mono<Void> recoverShortTermMemory(String conversationId) {
-        return conversationArchiveStore.loadRecentTurns(
+        return learningSessionMessageStore.loadRecentTurns(
                         conversationId,
                         Math.max(2, memoryProperties.getShortTerm().getMaxTurns() * 2)
                 )
                 .flatMap(turns -> learningSessionStore.getByConversationId(conversationId)
                         .flatMap(session -> shortTermMemoryStore.rebuild(
-                                        conversationId,
-                                        turns,
-                                        session.turnCount()
-                                )
-                        ));
+                                conversationId,
+                                turns,
+                                session.turnCount()
+                        )));
     }
 
     private Mono<Void> appendTurnInternal(String conversationId,
+                                          String requestId,
                                           SessionTurnPair turnPair,
                                           String currentTopic,
                                           Map<String, Object> sessionMetadata) {
-        Mono<float[]> userEmbedding = embed(turnPair.userTurn().content());
-        Mono<float[]> assistantEmbedding = embed(turnPair.assistantTurn().content());
-
-        return Mono.zip(userEmbedding, assistantEmbedding)
-                .flatMap(tuple -> transactionalOperator.transactional(
-                                learningSessionStore.reserveNextTurn(conversationId, currentTopic)
-                                        .flatMap(turnIndex -> {
-                                            SessionTurnPair indexedTurnPair = indexTurnPair(turnPair, turnIndex);
-                                            return conversationArchiveStore.archiveTurnPair(
-                                                            conversationId,
-                                                            indexedTurnPair,
-                                                            tuple.getT1(),
-                                                            tuple.getT2(),
-                                                            enrichMetadata(sessionMetadata, turnIndex),
-                                                            turnIndex
-                                                    )
-                                                    .thenReturn(new PersistedTurn(turnIndex, indexedTurnPair));
-                                        })
-                        )
-                        .flatMap(persistedTurn -> synchronizeShortTermMemory(conversationId, persistedTurn))
-                        .flatMap(turnIndex -> maybeArchiveSummary(conversationId, turnIndex).thenReturn(turnIndex))
-                        .then());
+        return transactionalOperator.transactional(
+                        learningSessionStore.reserveNextTurn(conversationId, currentTopic)
+                                .flatMap(turnIndex -> {
+                                    SessionTurnPair indexedTurnPair = indexTurnPair(turnPair, turnIndex);
+                                    return learningSessionMessageStore.saveTurnPair(conversationId, requestId, indexedTurnPair, turnIndex)
+                                            .then(learningSessionMemoryTaskStore.enqueueTurnSync(conversationId, requestId, turnIndex))
+                                            .then(learningSessionRequestStore.markSucceeded(
+                                                    conversationId,
+                                                    requestId,
+                                                    turnIndex,
+                                                    indexedTurnPair.assistantTurn().content()
+                                            ))
+                                            .then(learningSessionStore.releaseProcessingSlot(conversationId, requestId))
+                                            .thenReturn(new PersistedTurn(turnIndex, indexedTurnPair));
+                                })
+                )
+                .flatMap(persistedTurn -> synchronizeShortTermMemory(conversationId, persistedTurn))
+                .then();
     }
 
     private Mono<Integer> synchronizeShortTermMemory(String conversationId, PersistedTurn persistedTurn) {
@@ -191,7 +204,7 @@ public class SessionStorageService {
                         shortTermMemoryStore.getTotalTurns(session.conversationId())
                 )
                 .onErrorResume(error -> {
-                    log.warn("Short-term memory cache read failed, falling back to archive store. conversationId={}", session.conversationId(), error);
+                    log.warn("Short-term memory cache read failed, falling back to message store. conversationId={}", session.conversationId(), error);
                     return Mono.empty();
                 })
                 .flatMap(tuple -> {
@@ -201,7 +214,7 @@ public class SessionStorageService {
                     if (isCacheConsistent(cachedTurns, cachedTurnCount, authoritativeTurnCount)) {
                         return Mono.just(cachedTurns);
                     }
-                    return conversationArchiveStore.loadRecentTurns(
+                    return learningSessionMessageStore.loadRecentTurns(
                                     session.conversationId(),
                                     Math.max(2, memoryProperties.getShortTerm().getMaxTurns() * 2)
                             )
@@ -216,7 +229,7 @@ public class SessionStorageService {
                                     })
                                     .thenReturn(fallbackTurns));
                 })
-                .switchIfEmpty(conversationArchiveStore.loadRecentTurns(
+                .switchIfEmpty(learningSessionMessageStore.loadRecentTurns(
                         session.conversationId(),
                         Math.max(2, memoryProperties.getShortTerm().getMaxTurns() * 2)
                 ));
@@ -241,7 +254,7 @@ public class SessionStorageService {
                 .orElse(-1);
     }
 
-    private Map<String, Object> enrichMetadata(Map<String, Object> sessionMetadata, int turnIndex) {
+    public Map<String, Object> enrichMetadata(Map<String, Object> sessionMetadata, int turnIndex) {
         Map<String, Object> metadata = new HashMap<>();
         if (sessionMetadata != null) {
             metadata.putAll(sessionMetadata);
@@ -267,7 +280,7 @@ public class SessionStorageService {
         return new ConversationTurn(turn.role(), turn.content(), turn.createdAt(), metadata);
     }
 
-    private Mono<Void> maybeArchiveSummary(String conversationId, int turnIndex) {
+    public Mono<Void> maybeArchiveSummary(String conversationId, int turnIndex) {
         if (!memoryProperties.getSummary().isEnabled()) {
             return Mono.empty();
         }
@@ -282,7 +295,7 @@ public class SessionStorageService {
                         return Mono.empty();
                     }
                     int startTurn = Math.max(1, lastSummarizedTurn + 1);
-                    return conversationArchiveStore.loadTurnsByTurnRange(conversationId, startTurn, turnIndex)
+                    return learningSessionMessageStore.loadTurnsByTurnRange(conversationId, startTurn, turnIndex)
                             .flatMap(turns -> summarizeTurns(conversationId, session, turns, startTurn, turnIndex))
                             .flatMap(summary -> archiveSummary(
                                             conversationId,
@@ -290,7 +303,7 @@ public class SessionStorageService {
                                             Map.of(
                                                     "summaryStartTurn", startTurn,
                                                     "summaryEndTurn", turnIndex,
-                                                    "generatedBy", "session-storage-service"
+                                                    "generatedBy", "session-memory-sync-service"
                                             )
                                     )
                                     .then(learningSessionStore.updateLastSummarizedTurn(conversationId, turnIndex)))

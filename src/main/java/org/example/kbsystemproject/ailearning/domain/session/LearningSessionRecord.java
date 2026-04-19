@@ -12,6 +12,7 @@ public record LearningSessionRecord(
         String currentTopic,
         Integer turnCount,
         Integer lastSummarizedTurn,
+        String processingRequestId,
         LearningSessionStatus status,
         OffsetDateTime createdAt,
         OffsetDateTime updatedAt,

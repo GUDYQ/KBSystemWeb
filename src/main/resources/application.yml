@@ -112,6 +112,13 @@ memory:
     enabled: true
     lock-wait-millis: 3000
     lock-lease-millis: 15000
+  request:
+    processing-lease-seconds: 600
+  async:
+    fixed-delay-millis: 3000
+    batch-size: 20
+    lease-seconds: 120
+    retry-delay-seconds: 30
 
   kafka:
     topics:

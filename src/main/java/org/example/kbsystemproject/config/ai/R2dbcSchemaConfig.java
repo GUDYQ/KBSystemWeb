@@ -17,6 +17,7 @@ public class R2dbcSchemaConfig {
         initializer.setConnectionFactory(connectionFactory);
         initializer.setDatabasePopulator(new CompositeDatabasePopulator(
                 new ResourceDatabasePopulator(new ClassPathResource("db/schema-learning-session.sql")),
+                new ResourceDatabasePopulator(new ClassPathResource("db/schema-learning-session-runtime.sql")),
                 new ResourceDatabasePopulator(new ClassPathResource("db/schema-conversation-archive.sql"))
         ));
         return initializer;

@@ -52,6 +52,15 @@ public class LearningSessionStore {
         return repository.updateStatus(conversationId, LearningSessionStatus.CLOSED.name()).then();
     }
 
+    public Mono<Boolean> acquireProcessingSlot(String conversationId, String requestId, OffsetDateTime leaseExpiresAt) {
+        return repository.acquireProcessingSlot(conversationId, requestId, leaseExpiresAt, LearningSessionStatus.ACTIVE.name())
+                .hasElement();
+    }
+
+    public Mono<Void> releaseProcessingSlot(String conversationId, String requestId) {
+        return repository.releaseProcessingSlot(conversationId, requestId).then();
+    }
+
     public Mono<Void> updateLastSummarizedTurn(String conversationId, int lastSummarizedTurn) {
         return repository.updateLastSummarizedTurn(conversationId, lastSummarizedTurn).then();
     }
@@ -72,6 +81,8 @@ public class LearningSessionStore {
         entity.setCurrentTopic(currentTopic);
         entity.setTurnCount(0);
         entity.setLastSummarizedTurn(0);
+        entity.setProcessingRequestId(null);
+        entity.setProcessingLeaseExpiresAt(null);
         entity.setStatus(LearningSessionStatus.ACTIVE.name());
         entity.setCreatedAt(now);
         entity.setUpdatedAt(now);
@@ -122,6 +133,7 @@ public class LearningSessionStore {
                 entity.getCurrentTopic(),
                 entity.getTurnCount(),
                 defaultInteger(entity.getLastSummarizedTurn()),
+                entity.getProcessingRequestId(),
                 LearningSessionStatus.valueOf(entity.getStatus()),
                 entity.getCreatedAt(),
                 entity.getUpdatedAt(),

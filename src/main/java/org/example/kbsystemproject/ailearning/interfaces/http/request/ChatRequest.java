@@ -5,6 +5,7 @@ import org.example.kbsystemproject.ailearning.domain.session.LearningSessionType
 
 public record ChatRequest(
         String conversationId,
+        String requestId,
         String userId,
         String subject,
         LearningSessionType sessionType,

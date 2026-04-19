@@ -8,6 +8,8 @@ CREATE TABLE IF NOT EXISTS learning_session (
     current_topic TEXT,
     turn_count INTEGER NOT NULL DEFAULT 0,
     last_summarized_turn INTEGER NOT NULL DEFAULT 0,
+    processing_request_id VARCHAR(128),
+    processing_lease_expires_at TIMESTAMPTZ,
     status VARCHAR(32) NOT NULL DEFAULT 'ACTIVE',
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
@@ -17,8 +19,17 @@ CREATE TABLE IF NOT EXISTS learning_session (
 ALTER TABLE learning_session
 ADD COLUMN IF NOT EXISTS last_summarized_turn INTEGER NOT NULL DEFAULT 0;
 
+ALTER TABLE learning_session
+ADD COLUMN IF NOT EXISTS processing_request_id VARCHAR(128);
+
+ALTER TABLE learning_session
+ADD COLUMN IF NOT EXISTS processing_lease_expires_at TIMESTAMPTZ;
+
 CREATE INDEX IF NOT EXISTS idx_learning_session_user_id
 ON learning_session(user_id);
 
 CREATE INDEX IF NOT EXISTS idx_learning_session_last_active_at
 ON learning_session(last_active_at DESC);
+
+CREATE INDEX IF NOT EXISTS idx_learning_session_processing_request
+ON learning_session(processing_request_id);

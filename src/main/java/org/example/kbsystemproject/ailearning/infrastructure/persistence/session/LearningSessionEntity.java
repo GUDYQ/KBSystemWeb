@@ -18,6 +18,8 @@ public class LearningSessionEntity {
     private String currentTopic;
     private Integer turnCount;
     private Integer lastSummarizedTurn;
+    private String processingRequestId;
+    private OffsetDateTime processingLeaseExpiresAt;
     private String status;
     private OffsetDateTime createdAt;
     private OffsetDateTime updatedAt;
@@ -93,6 +95,22 @@ public class LearningSessionEntity {
 
     public void setLastSummarizedTurn(Integer lastSummarizedTurn) {
         this.lastSummarizedTurn = lastSummarizedTurn;
+    }
+
+    public String getProcessingRequestId() {
+        return processingRequestId;
+    }
+
+    public void setProcessingRequestId(String processingRequestId) {
+        this.processingRequestId = processingRequestId;
+    }
+
+    public OffsetDateTime getProcessingLeaseExpiresAt() {
+        return processingLeaseExpiresAt;
+    }
+
+    public void setProcessingLeaseExpiresAt(OffsetDateTime processingLeaseExpiresAt) {
+        this.processingLeaseExpiresAt = processingLeaseExpiresAt;
     }
 
     public String getStatus() {

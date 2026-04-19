@@ -10,10 +10,12 @@ import org.springframework.boot.autoconfigure.SpringBootApplication;
 import org.springframework.boot.context.properties.ConfigurationPropertiesScan;
 import org.springframework.boot.context.properties.EnableConfigurationProperties;
 import org.springframework.security.config.annotation.method.configuration.EnableReactiveMethodSecurity;
+import org.springframework.scheduling.annotation.EnableScheduling;
 
 @SpringBootApplication(exclude = {OpenAiChatAutoConfiguration.class, OpenAiEmbeddingAutoConfiguration.class})
 @EnableReactiveMethodSecurity
 @ConfigurationPropertiesScan
+@EnableScheduling
 public class KbSystemProjectApplication {
 
     public static void main(String[] args) {

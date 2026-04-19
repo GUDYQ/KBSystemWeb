@@ -36,8 +36,8 @@ public class AiLearningController {
     public Flux<ResponseVO<ChatChunkResponse>> chat(@Valid @RequestBody ChatRequest request) {
         LearningChatCommand command = toCommand(request);
         return aiLearningApplicationService.chat(command)
-                .map(content -> ChatChunkResponse.token(command.conversationId(), content))
-                .concatWith(Mono.just(ChatChunkResponse.finish(command.conversationId(), "回答完成")))
+                .map(content -> ChatChunkResponse.token(command.conversationId(), command.requestId(), content))
+                .concatWith(Mono.just(ChatChunkResponse.finish(command.conversationId(), command.requestId(), "回答完成")))
                 .map(ResponseBuilder::success);
     }
 
@@ -51,27 +51,29 @@ public class AiLearningController {
     public Mono<ResponseVO<ChatTaskResponse>> startChatBackground(@Valid @RequestBody ChatRequest request) {
         LearningChatCommand command = toCommand(request);
         return aiLearningApplicationService.startChat(command)
-                .thenReturn(ResponseBuilder.success(new ChatTaskResponse(command.conversationId(), "PROCESSING")));
+                .thenReturn(ResponseBuilder.success(new ChatTaskResponse(command.conversationId(), command.requestId(), "PROCESSING")));
     }
 
     @GetMapping(value = "/chat/stream", produces = MediaType.TEXT_EVENT_STREAM_VALUE)
     public Flux<ResponseVO<ChatChunkResponse>> getChatStream(@RequestParam String conversationId) {
         return aiLearningApplicationService.getSessionLiveStream(conversationId)
-                .map(content -> ChatChunkResponse.token(conversationId, content))
-                .concatWith(Mono.just(ChatChunkResponse.finish(conversationId, "回答完成")))
+                .map(content -> ChatChunkResponse.token(conversationId, null, content))
+                .concatWith(Mono.just(ChatChunkResponse.finish(conversationId, null, "回答完成")))
                 .map(ResponseBuilder::success);
     }
 
     @PostMapping("/chat/stop")
     public Mono<ResponseVO<ChatTaskResponse>> stopGeneration(@RequestParam String conversationId) {
         return aiLearningApplicationService.stopChat(conversationId)
-                .thenReturn(ResponseBuilder.success(new ChatTaskResponse(conversationId, "STOPPED")));
+                .thenReturn(ResponseBuilder.success(new ChatTaskResponse(conversationId, null, "STOPPED")));
     }
 
     private LearningChatCommand toCommand(ChatRequest request) {
         String conversationId = resolveConversationId(request.conversationId());
+        String requestId = resolveRequestId(request.requestId());
         return new LearningChatCommand(
                 conversationId,
+                requestId,
                 request.userId(),
                 request.subject(),
                 request.sessionType(),
@@ -86,5 +88,12 @@ public class AiLearningController {
             return conversationId;
         }
         return "conv_" + UUID.randomUUID().toString().replace("-", "");
+    }
+
+    private String resolveRequestId(String requestId) {
+        if (requestId != null && !requestId.isBlank()) {
+            return requestId;
+        }
+        return "req_" + UUID.randomUUID().toString().replace("-", "");
     }
 }

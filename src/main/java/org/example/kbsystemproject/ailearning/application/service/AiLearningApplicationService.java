@@ -7,6 +7,8 @@ import org.example.kbsystemproject.ailearning.domain.session.LearningSessionStat
 import org.example.kbsystemproject.ailearning.domain.session.LongTermMemoryEntry;
 import org.example.kbsystemproject.ailearning.domain.session.SessionMemorySnapshot;
 import org.example.kbsystemproject.ailearning.domain.session.SessionMessageRole;
+import org.example.kbsystemproject.ailearning.domain.session.SessionRequestDecision;
+import org.example.kbsystemproject.ailearning.domain.session.SessionRequestDecisionType;
 import org.example.kbsystemproject.ailearning.domain.session.SessionTurnPair;
 import org.springframework.ai.chat.client.ChatClient;
 import org.springframework.ai.chat.messages.AssistantMessage;
@@ -17,12 +19,15 @@ import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.stereotype.Service;
 import reactor.core.publisher.Flux;
 import reactor.core.publisher.Mono;
+import reactor.core.publisher.SignalType;
 import reactor.core.scheduler.Schedulers;
 
 import java.time.OffsetDateTime;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.CancellationException;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicReference;
 
 @Slf4j
@@ -41,17 +46,20 @@ public class AiLearningApplicationService {
     private final ReActAgent reActAgent;
     private final SessionStorageService sessionStorageService;
     private final SessionStreamService sessionStreamService;
+    private final SessionRequestService sessionRequestService;
 
     public AiLearningApplicationService(@Qualifier("chatClient") ChatClient chatClient,
                                         VectorStore pgVectorStore,
                                         ReActAgent reActAgent,
                                         SessionStorageService sessionStorageService,
-                                        SessionStreamService sessionStreamService) {
+                                        SessionStreamService sessionStreamService,
+                                        SessionRequestService sessionRequestService) {
         this.chatClient = chatClient;
         this.pgVectorStore = pgVectorStore;
         this.reActAgent = reActAgent;
         this.sessionStorageService = sessionStorageService;
         this.sessionStreamService = sessionStreamService;
+        this.sessionRequestService = sessionRequestService;
     }
 
     public Flux<String> chat(LearningChatCommand command) {
@@ -104,8 +112,14 @@ public class AiLearningApplicationService {
 
     public Flux<String> chatWithAgent(LearningChatCommand command) {
         return sessionStorageService.openSession(command.toSessionOpenCommand())
-                .flatMapMany(ignored -> sessionStorageService.loadSnapshot(command.conversationId(), command.prompt()))
-                .flatMap(snapshot -> runAgentWithSession(command, snapshot));
+                .flatMapMany(ignored -> sessionRequestService.beginRequest(command.conversationId(), command.requestId()))
+                .flatMap(decision -> switch (decision.type()) {
+                    case COMPLETED -> Flux.just(decision.record().assistantContent());
+                    case PROCESSING -> Flux.error(new SessionRequestConflictException("当前请求正在处理中: " + command.requestId()));
+                    case CONVERSATION_BUSY -> Flux.error(new SessionRequestConflictException("当前会话已有进行中的请求，请稍后重试"));
+                    case ACQUIRED -> sessionStorageService.loadSnapshot(command.conversationId(), command.prompt())
+                            .flatMapMany(snapshot -> runAgentWithSession(command, snapshot));
+                });
     }
 
     private Flux<String> runAgentWithSession(LearningChatCommand command, SessionMemorySnapshot snapshot) {
@@ -117,6 +131,7 @@ public class AiLearningApplicationService {
         );
         AtomicReference<String> finalAssistantContent = new AtomicReference<>("");
         StringBuilder fallbackAssistantContent = new StringBuilder();
+        AtomicBoolean persisted = new AtomicBoolean(false);
 
         return reActAgent.run(buildAgentHistory(command, snapshot), command.prompt(), buildAgentBusinessContext(command, snapshot))
                 .doOnNext(event -> collectAssistantContent(event.state(), event.content(), finalAssistantContent, fallbackAssistantContent))
@@ -126,11 +141,34 @@ public class AiLearningApplicationService {
                 })
                 .filter(content -> content != null && !content.isBlank())
                 .concatWith(Mono.defer(() -> persistTurn(
-                        command,
-                        userTurn,
-                        resolveAssistantContent(finalAssistantContent.get(), fallbackAssistantContent.toString()),
-                        snapshot
-                )));
+                                command,
+                                userTurn,
+                                resolveAssistantContent(finalAssistantContent.get(), fallbackAssistantContent.toString()),
+                                snapshot
+                        ))
+                        .doOnSuccess(ignored -> persisted.set(true)))
+                .onErrorResume(error -> sessionRequestService.markFailed(command.conversationId(), command.requestId(), error)
+                        .then(Mono.error(error)))
+                .doFinally(signalType -> releaseIfCanceled(command, persisted, signalType));
+    }
+
+    private void releaseIfCanceled(LearningChatCommand command, AtomicBoolean persisted, SignalType signalType) {
+        if (signalType != SignalType.CANCEL || persisted.get()) {
+            return;
+        }
+        sessionRequestService.markFailed(
+                        command.conversationId(),
+                        command.requestId(),
+                        new CancellationException("client canceled request before persistence")
+                )
+                .subscribe(
+                        ignored -> {
+                        },
+                        error -> log.warn("Failed to release canceled request. conversationId={}, requestId={}",
+                                command.conversationId(),
+                                command.requestId(),
+                                error)
+                );
     }
 
     private Mono<String> persistTurn(LearningChatCommand command,
@@ -139,7 +177,7 @@ public class AiLearningApplicationService {
                                      SessionMemorySnapshot snapshot) {
         String normalizedAssistantContent = assistantContent == null ? "" : assistantContent.trim();
         if (normalizedAssistantContent.isEmpty()) {
-            return Mono.empty();
+            return Mono.error(new IllegalStateException("Assistant content is empty"));
         }
 
         ConversationTurn assistantTurn = new ConversationTurn(
@@ -151,6 +189,7 @@ public class AiLearningApplicationService {
 
         return sessionStorageService.appendTurn(
                         command.conversationId(),
+                        command.requestId(),
                         new SessionTurnPair(userTurn, assistantTurn),
                         command.currentTopic(),
                         buildSessionMetadata(command, snapshot)
@@ -172,6 +211,7 @@ public class AiLearningApplicationService {
                                                           SessionMemorySnapshot snapshot) {
         Map<String, Object> context = new LinkedHashMap<>();
         context.put("conversationId", command.conversationId());
+        context.put("requestId", command.requestId());
         context.put("userId", command.userId());
         context.put("subject", command.subject());
         context.put("sessionType", command.sessionType() == null ? "QA" : command.sessionType().name());
@@ -216,17 +256,18 @@ public class AiLearningApplicationService {
 
     private String buildSystemPrompt(LearningChatCommand command, SessionMemorySnapshot snapshot) {
         StringBuilder builder = new StringBuilder(LEARNING_ASSISTANT_SYSTEM_PROMPT);
-        builder.append("\n当前会话信息：\n");
+        builder.append("\n当前会话信息:\n");
         builder.append("- conversationId: ").append(command.conversationId()).append('\n');
+        builder.append("- requestId: ").append(command.requestId()).append('\n');
         builder.append("- userId: ").append(defaultText(command.userId())).append('\n');
         builder.append("- subject: ").append(defaultText(command.subject())).append('\n');
         builder.append("- sessionType: ").append(command.sessionType() == null ? "QA" : command.sessionType().name()).append('\n');
         builder.append("- learningGoal: ").append(defaultText(command.learningGoal())).append('\n');
         builder.append("- currentTopic: ").append(defaultText(command.currentTopic())).append('\n');
         builder.append("- status: ").append(snapshot.session().status() == null ? LearningSessionStatus.ACTIVE.name() : snapshot.session().status().name()).append('\n');
-        builder.append("\n近期对话：\n");
+        builder.append("\n近期对话:\n");
         builder.append(formatShortTermMemory(snapshot.shortTermMemory()));
-        builder.append("\n长期记忆：\n");
+        builder.append("\n长期记忆:\n");
         builder.append(formatLongTermMemory(snapshot.longTermMemory()));
         return builder.toString();
     }
@@ -263,6 +304,7 @@ public class AiLearningApplicationService {
 
     private Map<String, Object> buildSessionMetadata(LearningChatCommand command, SessionMemorySnapshot snapshot) {
         Map<String, Object> metadata = new LinkedHashMap<>();
+        metadata.put("requestId", command.requestId());
         metadata.put("subject", defaultText(command.subject()));
         metadata.put("sessionType", command.sessionType() == null ? "QA" : command.sessionType().name());
         metadata.put("currentTopic", defaultText(command.currentTopic()));
@@ -272,6 +314,7 @@ public class AiLearningApplicationService {
 
     private Map<String, Object> buildUserTurnMetadata(LearningChatCommand command) {
         Map<String, Object> metadata = new LinkedHashMap<>();
+        metadata.put("requestId", command.requestId());
         if (command.subject() != null && !command.subject().isBlank()) {
             metadata.put("subject", command.subject());
         }
