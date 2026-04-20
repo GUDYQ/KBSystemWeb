@@ -4,6 +4,9 @@ import org.example.kbsystemproject.ailearning.domain.session.ConversationTurn;
 import org.example.kbsystemproject.ailearning.domain.session.LearningSessionRecord;
 import org.example.kbsystemproject.ailearning.domain.session.LearningSessionStatus;
 import org.example.kbsystemproject.ailearning.domain.session.LearningSessionType;
+import org.example.kbsystemproject.ailearning.infrastructure.persistence.session.LearningSessionMemoryTaskStore;
+import org.example.kbsystemproject.ailearning.infrastructure.persistence.session.LearningSessionMessageStore;
+import org.example.kbsystemproject.ailearning.infrastructure.persistence.session.LearningSessionRequestStore;
 import org.example.kbsystemproject.ailearning.infrastructure.memory.ConversationArchiveStore;
 import org.example.kbsystemproject.ailearning.infrastructure.memory.RedisShortTermMemoryStore;
 import org.example.kbsystemproject.ailearning.infrastructure.persistence.session.LearningSessionStore;
@@ -26,9 +29,12 @@ import java.util.Map;
 
 import static org.mockito.ArgumentMatchers.anyList;
 import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.ArgumentMatchers.anyInt;
+import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
+import static org.mockito.Mockito.lenient;
 
 @ExtendWith(MockitoExtension.class)
 class SessionStorageServiceTest {
@@ -41,6 +47,15 @@ class SessionStorageServiceTest {
 
     @Mock
     private ConversationArchiveStore conversationArchiveStore;
+
+    @Mock
+    private LearningSessionRequestStore learningSessionRequestStore;
+
+    @Mock
+    private LearningSessionMessageStore learningSessionMessageStore;
+
+    @Mock
+    private LearningSessionMemoryTaskStore learningSessionMemoryTaskStore;
 
     @Mock
     private EmbeddingModel embeddingModel;
@@ -62,6 +77,9 @@ class SessionStorageServiceTest {
         memoryProperties.getShortTerm().setMaxTurns(3);
         sessionStorageService = new SessionStorageService(
                 learningSessionStore,
+                learningSessionRequestStore,
+                learningSessionMessageStore,
+                learningSessionMemoryTaskStore,
                 shortTermMemoryStore,
                 conversationArchiveStore,
                 embeddingModel,
@@ -71,6 +89,7 @@ class SessionStorageServiceTest {
                 transactionalOperator,
                 sessionLockService
         );
+        lenient().when(learningSessionMessageStore.loadRecentTurns(anyString(), anyInt())).thenReturn(Mono.just(List.of()));
     }
 
     @Test
@@ -89,7 +108,6 @@ class SessionStorageServiceTest {
                 .expectNext(cachedTurns)
                 .verifyComplete();
 
-        verify(conversationArchiveStore, never()).loadRecentTurns(eq("conv-1"), eq(6));
         verify(shortTermMemoryStore, never()).rebuild(eq("conv-1"), anyList(), eq(2L));
     }
 
@@ -105,7 +123,7 @@ class SessionStorageServiceTest {
         when(learningSessionStore.getByConversationId("conv-2")).thenReturn(Mono.just(session));
         when(shortTermMemoryStore.getRecentTurns("conv-2")).thenReturn(Mono.just(staleTurns));
         when(shortTermMemoryStore.getTotalTurns("conv-2")).thenReturn(Mono.just(2L));
-        when(conversationArchiveStore.loadRecentTurns("conv-2", 6)).thenReturn(Mono.just(archiveTurns));
+        when(learningSessionMessageStore.loadRecentTurns("conv-2", 6)).thenReturn(Mono.just(archiveTurns));
         when(shortTermMemoryStore.rebuild("conv-2", archiveTurns, 3L)).thenReturn(Mono.empty());
 
         StepVerifier.create(sessionStorageService.getShortTermMemory("conv-2"))
@@ -136,6 +154,7 @@ class SessionStorageServiceTest {
                 "topic",
                 turnCount,
                 lastSummarizedTurn,
+                null,
                 LearningSessionStatus.ACTIVE,
                 now,
                 now,

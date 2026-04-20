@@ -81,7 +81,7 @@ public class ConversationArchiveStore {
         }
 
         return spec.map((row, metadata) -> new LongTermMemoryEntry(
-                        row.get("id", Long.class),
+                        readIdentifier(row.get("id")),
                         row.get("conversation_id", String.class),
                         row.get("memory_type", String.class),
                         row.get("content", String.class),
@@ -91,6 +91,10 @@ public class ConversationArchiveStore {
                 ))
                 .all()
                 .collectList();
+    }
+
+    private String readIdentifier(Object rawId) {
+        return rawId == null ? null : rawId.toString();
     }
 
     public Mono<List<ConversationTurn>> loadRecentTurns(String conversationId, int limit) {

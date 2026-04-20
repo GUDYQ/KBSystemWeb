@@ -8,17 +8,20 @@ import org.springframework.ai.chat.messages.Message;
 import org.springframework.ai.chat.messages.UserMessage;
 import reactor.core.publisher.Flux;
 import reactor.core.scheduler.Scheduler;
-import reactor.core.scheduler.Schedulers;
 
 import java.util.Collections;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 
 @Slf4j
 public abstract class BaseAgent {
 
-    // 将刚才我们在 Service 中定义的隔离线程池下沉到 BaseAgent，作为统一的 Agent 运转专有池
-    private final Scheduler agentScheduler = Schedulers.newBoundedElastic(100, 10000, "ai-agent-pool");
+    private final Scheduler agentScheduler;
+
+    protected BaseAgent(Scheduler agentScheduler) {
+        this.agentScheduler = Objects.requireNonNull(agentScheduler, "agentScheduler");
+    }
 
     // 暴露给外部或者子类使用
     public Scheduler getScheduler() {

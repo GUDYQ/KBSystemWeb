@@ -1,6 +1,7 @@
 package org.example.kbsystemproject.ToolTest;
 
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.condition.EnabledIfEnvironmentVariable;
 import org.springframework.ai.chat.client.ChatClient;
 import org.springframework.ai.chat.model.ChatModel;
 import org.springframework.ai.openai.OpenAiChatOptions;
@@ -17,6 +18,7 @@ import java.util.function.Function;
 
 @SpringBootTest
 @org.springframework.context.annotation.Import(AutoToolChatClientTest.ToolConfig.class)
+@EnabledIfEnvironmentVariable(named = "OPENAI_API_KEY", matches = ".+")
 public class AutoToolChatClientTest {
     @DynamicPropertySource
     static void props(DynamicPropertyRegistry registry) {

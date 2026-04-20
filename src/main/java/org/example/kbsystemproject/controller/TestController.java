@@ -1,6 +1,7 @@
 package org.example.kbsystemproject.controller;
 
 import org.example.kbsystemproject.ailearning.application.service.AiLearningApplicationService;
+import org.example.kbsystemproject.ailearning.evaluation.retrieval.EnhancedRecallEvaluator;
 import org.example.kbsystemproject.ailearning.evaluation.retrieval.RecallEvaluator;
 import org.example.kbsystemproject.ailearning.evaluation.retrieval.T2RecallTestCaseBuilder;
 import org.example.kbsystemproject.base.response.ResponseBuilder;
@@ -19,13 +20,16 @@ public class TestController {
 
     private final AiLearningApplicationService aiLearningApplicationService;
     private final RecallEvaluator recallEvaluator;
+    private final EnhancedRecallEvaluator enhancedRecallEvaluator;
     private final T2RecallTestCaseBuilder testCaseBuilder;
 
     public TestController(AiLearningApplicationService aiLearningApplicationService,
                           RecallEvaluator recallEvaluator,
+                          EnhancedRecallEvaluator enhancedRecallEvaluator,
                           T2RecallTestCaseBuilder testCaseBuilder) {
         this.aiLearningApplicationService = aiLearningApplicationService;
         this.recallEvaluator = recallEvaluator;
+        this.enhancedRecallEvaluator = enhancedRecallEvaluator;
         this.testCaseBuilder = testCaseBuilder;
     }
 
@@ -74,6 +78,16 @@ public class TestController {
                 .collectList()
                 .flatMap(recallEvaluator::evaluateBatch)
                 .map(RecallEvaluator.RecallReport::getAvgRecall)
+                .map(ResponseBuilder::success);
+    }
+
+    @GetMapping("/batch/enhanced")
+    public Mono<ResponseVO<EnhancedRecallEvaluator.RecallComparisonReport>> batchEnhancedRecall(
+            @RequestParam(defaultValue = "20") int limit) {
+        return testCaseBuilder.buildDevCases()
+                .take(Math.max(1, limit))
+                .collectList()
+                .flatMap(enhancedRecallEvaluator::evaluateBatch)
                 .map(ResponseBuilder::success);
     }
 }

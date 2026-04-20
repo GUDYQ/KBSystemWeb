@@ -12,6 +12,7 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import reactor.core.publisher.Flux;
 import reactor.core.publisher.Mono;
+import reactor.core.scheduler.Scheduler;
 
 import java.util.List;
 import java.util.Map;
@@ -53,14 +54,16 @@ public class PERAgent extends AbstractChatAgent {
     private static final String PLAN_KEY = "CURRENT_PLAN";
     private static final String STEP_INDEX_KEY = "CURRENT_STEP_INDEX";
 
-    public PERAgent(ChatClient chatClient, List<ReactiveTool> tools, int maxSteps) {
+    public PERAgent(ChatClient chatClient, List<ReactiveTool> tools, int maxSteps, Scheduler agentScheduler) {
+        super(agentScheduler);
         this.chatClient = chatClient;
         this.toolRegistry = new ReactiveToolRegistry();
         tools.forEach(this.toolRegistry::register);
         this.maxSteps = maxSteps;
     }
 
-    public PERAgent(ChatClient chatClient, List<ReactiveTool> tools, List<org.springframework.ai.tool.ToolCallback> mcpTools, int maxSteps) {
+    public PERAgent(ChatClient chatClient, List<ReactiveTool> tools, List<org.springframework.ai.tool.ToolCallback> mcpTools, int maxSteps, Scheduler agentScheduler) {
+        super(agentScheduler);
         this.chatClient = chatClient;
         this.toolRegistry = new ReactiveToolRegistry();
         if (tools != null) {

@@ -4,7 +4,7 @@ import java.time.OffsetDateTime;
 import java.util.Map;
 
 public record LongTermMemoryEntry(
-        Long id,
+        String id,
         String conversationId,
         String memoryType,
         String content,

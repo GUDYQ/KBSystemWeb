@@ -10,6 +10,7 @@ import org.springframework.ai.chat.messages.ToolResponseMessage.ToolResponse;
 import org.springframework.ai.tool.ToolCallback;
 import reactor.core.publisher.Flux;
 import reactor.core.publisher.Mono;
+import reactor.core.scheduler.Scheduler;
 
 import java.util.List;
 
@@ -21,14 +22,16 @@ public class ReActAgent extends AbstractChatAgent {
     private final ReactiveToolRegistry toolRegistry; // 你的工具执行器
     private final int maxSteps; // 最大步骤数
 
-    public ReActAgent(ChatClient chatClient, List<ReactiveTool> tools, int maxSteps) {
+    public ReActAgent(ChatClient chatClient, List<ReactiveTool> tools, int maxSteps, Scheduler agentScheduler) {
+        super(agentScheduler);
         this.chatClient = chatClient;
         this.toolRegistry = new ReactiveToolRegistry();
         tools.forEach(toolRegistry::register);
         this.maxSteps = maxSteps;
     }
 
-    public ReActAgent(ChatClient chatClient, List<ReactiveTool> tools, List<ToolCallback> mcpTools, int maxSteps) {
+    public ReActAgent(ChatClient chatClient, List<ReactiveTool> tools, List<ToolCallback> mcpTools, int maxSteps, Scheduler agentScheduler) {
+        super(agentScheduler);
         this.chatClient = chatClient;
         this.toolRegistry = new ReactiveToolRegistry();
         if (tools != null) {

@@ -89,7 +89,7 @@ management:
   endpoints:
     web:
       exposure:
-        include: health,info,circuitbreakers
+        include: health,info,circuitbreakers,metrics
   endpoint:
     health:
       show-details: always
@@ -119,6 +119,27 @@ memory:
     batch-size: 20
     lease-seconds: 120
     retry-delay-seconds: 30
+
+ai-learning:
+  intent:
+    llm-fallback-enabled: false
+    llm-confidence-threshold: 0.65
+    follow-up-prompt-length-threshold: 24
+  hanlp:
+    enabled: ${HANLP_ENABLED:false}
+    base-url: https://www.hanlp.com/api
+    auth: ${HANLP_AUTH:}
+    language: zh
+    top-keywords: 6
+  query-enhancement:
+    enabled: true
+    llm-enabled: true
+    rewrite-enabled: true
+    multi-query-enabled: true
+    multi-query-count: 3
+    include-original: true
+    max-queries: 4
+    target-search-system: learning knowledge base
 
   kafka:
     topics:

@@ -12,12 +12,17 @@ import org.springframework.ai.chat.messages.Message;
 import reactor.core.publisher.Flux;
 import reactor.core.publisher.Mono;
 import reactor.core.publisher.SignalType;
+import reactor.core.scheduler.Scheduler;
 
 import java.util.List;
 
 public abstract class AbstractChatAgent extends BaseAgent {
 
     private final Logger log = LoggerFactory.getLogger(AbstractChatAgent.class);
+
+    protected AbstractChatAgent(Scheduler agentScheduler) {
+        super(agentScheduler);
+    }
 
     protected abstract ChatClient getChatClient();
 

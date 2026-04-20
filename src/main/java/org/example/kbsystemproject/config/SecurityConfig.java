@@ -59,7 +59,7 @@ public class SecurityConfig {
         UserAccessDeniedHandler userAccessDeniedHandler = userAccessDeniedHandler();
         return httpSecurity.csrf(ServerHttpSecurity.CsrfSpec::disable)
                 .authorizeExchange(authorize ->
-                                authorize.pathMatchers("/api/user/**", "/api/test/**", "/api/ai-learning/**"
+                                authorize.pathMatchers("/api/user/**", "/api/test/**", "/api/ai-learning/**", "/actuator/**"
                                     ,       "/api/upload/**").permitAll()
                                         .anyExchange().authenticated())
                 .securityContextRepository(NoOpServerSecurityContextRepository.getInstance())

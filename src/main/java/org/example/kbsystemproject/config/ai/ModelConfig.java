@@ -11,9 +11,11 @@ import org.springframework.ai.mcp.AsyncMcpToolCallbackProvider;
 import org.springframework.ai.openai.OpenAiChatOptions;
 import org.springframework.ai.tool.ToolCallback;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.context.annotation.Primary;
+import reactor.core.scheduler.Scheduler;
 
 import java.util.ArrayList;
 import java.util.Collections;
@@ -88,13 +90,15 @@ public class ModelConfig {
     }
 
     @Bean
-    public ReActAgent reActAgent(ChatClient chatClient) {
+    public ReActAgent reActAgent(ChatClient chatClient,
+                                 @Qualifier("agentScheduler") Scheduler agentScheduler) {
         List<ToolCallback> mcpTools = mcpToolCallbackProvider != null
                 ? List.of(mcpToolCallbackProvider.getToolCallbacks())
                 : List.of();
         return new ReActAgent(chatClient,
                 List.of(weatherReactiveTool, webSearchReactiveTool, finishTool),
                 mcpTools,
-                3);
+                3,
+                agentScheduler);
     }
 }
