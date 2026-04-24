@@ -12,6 +12,7 @@ public class MemoryProperties {
     private ShortTerm shortTerm = new ShortTerm();
     private LongTerm longTerm = new LongTerm();
     private Summary summary = new Summary();
+    private Compression compression = new Compression();
     private Concurrency concurrency = new Concurrency();
     private Request request = new Request();
     private Async async = new Async();
@@ -24,6 +25,7 @@ public class MemoryProperties {
 
     @Data
     public static class LongTerm {
+        private boolean enabled = true;
         private int topK = 5;
         private double similarityThreshold = 0.45;
         private double timeDecayLambda = 0.03;
@@ -33,6 +35,17 @@ public class MemoryProperties {
     public static class Summary {
         private boolean enabled = true;
         private int triggerTurns = 20;
+    }
+
+    @Data
+    public static class Compression {
+        private int recentRawTurns = 6;
+        private int shortTermTriggerTurns = 8;
+        private int topicBlockMinTurns = 3;
+        private double lowInfoRatioThreshold = 0.5;
+        private int unresolvedThreshold = 2;
+        private long idleSummaryMinutes = 30;
+        private int longTermArchiveMinTurns = 3;
     }
 
     @Data

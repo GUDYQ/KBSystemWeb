@@ -8,7 +8,10 @@ import io.micrometer.core.instrument.Timer;
 import lombok.extern.slf4j.Slf4j;
 import org.example.kbsystemproject.ailearning.domain.AgentEvent;
 import org.example.kbsystemproject.ailearning.domain.AgentState;
+import org.example.kbsystemproject.ailearning.domain.profile.LearningProfileContext;
+import org.example.kbsystemproject.ailearning.domain.intent.ExecutionMode;
 import org.example.kbsystemproject.ailearning.domain.intent.IntentDecision;
+import org.example.kbsystemproject.ailearning.domain.intent.IntentType;
 import org.example.kbsystemproject.ailearning.retrieval.Bm25SearchService;
 import org.example.kbsystemproject.ailearning.domain.session.ConversationTurn;
 import org.example.kbsystemproject.ailearning.domain.session.LearningSessionStatus;
@@ -30,18 +33,23 @@ import org.springframework.stereotype.Service;
 import reactor.core.publisher.Flux;
 import reactor.core.publisher.Mono;
 import reactor.core.publisher.SignalType;
+import reactor.core.scheduler.Schedulers;
 import reactor.core.scheduler.Scheduler;
 import reactor.util.context.Context;
 
 import java.time.OffsetDateTime;
+import java.time.Duration;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.StringJoiner;
 import java.util.concurrent.CancellationException;
+import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicReference;
+import java.util.function.Supplier;
 
 @Slf4j
 @Service
@@ -51,14 +59,19 @@ public class AiLearningApplicationService {
     private static final int RAG_MAX_CONTEXT_DOCS = 4;
     private static final int RAG_MAX_DOC_CONTENT_LENGTH = 500;
     private static final int RAG_RRF_K = 60;
+    private static final int AGENT_VISIBLE_CHUNK_MAX_CHARS = 24;
     private static final String CONTEXT_CONVERSATION_ID = "ai.conversationId";
     private static final String CONTEXT_REQUEST_ID = "ai.requestId";
     private static final String CONTEXT_EXECUTION_MODE = "ai.executionMode";
+    private static final Duration AGENT_VISIBLE_CHUNK_MAX_WAIT = Duration.ofMillis(80);
     private static final String LEARNING_ASSISTANT_SYSTEM_PROMPT = """
-            你是学习助手。
+            你是计算机学习助手，主要服务编程、数据结构、算法、操作系统、计算机网络、
+            数据库、软件工程等计算机学习场景。
             回答时优先基于当前会话上下文、历史对话和长期记忆。
             信息不足时直接说明缺失点，不要编造。
-            输出应服务于学习场景，尽量给出结论、步骤、易错点和总结。
+            默认把用户问题理解为计算机学习问题；如果用户明确指定其他学科，再按用户指定处理。
+            输出应服务于学习场景，尽量给出结论、步骤、关键概念、易错点和总结。
+            涉及代码时优先解释思路、复杂度、关键边界条件，必要时给出简洁示例。
             """;
 
     private final ChatClient chatClient;
@@ -72,6 +85,8 @@ public class AiLearningApplicationService {
     private final SessionStorageService sessionStorageService;
     private final SessionStreamService sessionStreamService;
     private final SessionRequestService sessionRequestService;
+    private final ProfileContextService profileContextService;
+    private final TopicInferenceService topicInferenceService;
 
     public AiLearningApplicationService(@Qualifier("chatClient") ChatClient chatClient,
                                         VectorStore pgVectorStore,
@@ -83,7 +98,9 @@ public class AiLearningApplicationService {
                                         @Qualifier("retrievalBlockingScheduler") Scheduler retrievalBlockingScheduler,
                                         SessionStorageService sessionStorageService,
                                         SessionStreamService sessionStreamService,
-                                        SessionRequestService sessionRequestService) {
+                                        SessionRequestService sessionRequestService,
+                                        ProfileContextService profileContextService,
+                                        TopicInferenceService topicInferenceService) {
         this.chatClient = chatClient;
         this.pgVectorStore = pgVectorStore;
         this.learningChatOrchestrator = learningChatOrchestrator;
@@ -95,14 +112,20 @@ public class AiLearningApplicationService {
         this.sessionStorageService = sessionStorageService;
         this.sessionStreamService = sessionStreamService;
         this.sessionRequestService = sessionRequestService;
+        this.profileContextService = profileContextService;
+        this.topicInferenceService = topicInferenceService;
     }
 
     public Flux<String> chat(LearningChatCommand command) {
-        return chatWithAgent(command);
+        return executeCoreChat(command);
     }
 
     public Mono<Void> startChat(LearningChatCommand command) {
-        return Mono.fromRunnable(() -> sessionStreamService.start(command.conversationId(), chatWithAgent(command)));
+        return Mono.fromRunnable(() -> sessionStreamService.start(command.conversationId(), executeCoreChat(command)));
+    }
+
+    public Flux<String> startChatAndStream(LearningChatCommand command) {
+        return sessionStreamService.startAndStream(command.conversationId(), executeCoreChat(command));
     }
 
     public Mono<Void> stopChat(String conversationId) {
@@ -148,38 +171,151 @@ public class AiLearningApplicationService {
     }
 
     public Flux<String> chatWithAgent(LearningChatCommand command) {
-        return sessionStorageService.openSession(command.toSessionOpenCommand())
-                .flatMapMany(ignored -> sessionRequestService.beginRequest(command.conversationId(), command.requestId()))
+        return executeSessionChat(command, false);
+    }
+
+    // 默认入口：按当前配置执行会话化问答，当前调试模式下会固定走 DIRECT。
+    private Flux<String> executeCoreChat(LearningChatCommand command) {
+        return executeSessionChat(command, true);
+    }
+
+    // 会话问答总入口：开会话、占请求槽位，并进入上下文加载和回答流程。
+    private Flux<String> executeSessionChat(LearningChatCommand command, boolean forceDirectExecution) {
+        RequestStageMonitor requestMonitor = new RequestStageMonitor();
+        Flux<String> pipeline = monitorStageMono(
+                "session.open",
+                command,
+                null,
+                requestMonitor,
+                sessionStorageService.openSession(command.toSessionOpenCommand())
+        ).flatMapMany(ignored -> monitorStageMono(
+                        "request.acquire",
+                        command,
+                        null,
+                        requestMonitor,
+                        sessionRequestService.beginRequest(command.conversationId(), command.requestId())
+                ))
                 .flatMap(decision -> switch (decision.type()) {
                     case COMPLETED -> Flux.just(decision.record().assistantContent());
                     case PROCESSING -> Flux.error(new SessionRequestConflictException("当前请求正在处理中: " + command.requestId()));
                     case CONVERSATION_BUSY -> Flux.error(new SessionRequestConflictException("当前会话已有进行中的请求，请稍后重试"));
-                    case ACQUIRED -> executeAcquiredRequest(command);
-                })
+                    case ACQUIRED -> executeAcquiredRequest(command, forceDirectExecution, requestMonitor);
+                });
+        return monitorPipelineExecution(command, requestMonitor, pipeline)
                 .contextWrite(buildRequestContext(command));
     }
 
-    private Flux<String> executeAcquiredRequest(LearningChatCommand command) {
-        return sessionStorageService.loadSnapshot(command.conversationId(), command.prompt())
-                .flatMapMany(snapshot -> routeWithIntent(command, snapshot))
+    // 请求拿到处理权后，先加载短期记忆快照，再路由到具体执行模式。
+    private Flux<String> executeAcquiredRequest(LearningChatCommand command,
+                                                boolean forceDirectExecution,
+                                                RequestStageMonitor requestMonitor) {
+        return monitorStageMono(
+                "snapshot.load",
+                command,
+                null,
+                requestMonitor,
+                sessionStorageService.loadSnapshot(command.conversationId(), command.prompt())
+        ).flatMapMany(snapshot -> routeWithIntent(command, snapshot, forceDirectExecution, requestMonitor))
                 .onErrorResume(error -> sessionRequestService.markFailed(command.conversationId(), command.requestId(), error)
                         .then(Mono.error(error)));
     }
 
-    private Flux<String> routeWithIntent(LearningChatCommand command, SessionMemorySnapshot snapshot) {
-        return intentRecognitionService.recognize(command, snapshot)
-                .flatMapMany(decision -> retrieveKnowledge(command, decision, snapshot)
-                        .flatMapMany(retrievedDocs -> switch (decision.executionMode()) {
-                            case DIRECT -> runDirectWithSession(command, snapshot, decision, retrievedDocs);
-                            case AGENT -> runAgentWithSession(command, snapshot, decision, retrievedDocs);
-                        })
-                        .contextWrite(context -> context.put(CONTEXT_EXECUTION_MODE, decision.executionMode().name())));
+    // 基于快照补全当前主题，并决定本轮回答如何消费短期上下文。
+    private Flux<String> routeWithIntent(LearningChatCommand command,
+                                         SessionMemorySnapshot snapshot,
+                                         boolean forceDirectExecution,
+                                         RequestStageMonitor requestMonitor) {
+        LearningChatCommand effectiveCommand = monitorSynchronousStage(
+                "topic.infer",
+                command,
+                null,
+                requestMonitor,
+                () -> command.withCurrentTopic(topicInferenceService.inferTopic(command, snapshot))
+        );
+        Mono<LearningProfileContext> profileContextMono = monitorStageMono(
+                "profile.load",
+                effectiveCommand,
+                null,
+                requestMonitor,
+                profileContextService.loadContext(snapshot.session())
+                        .defaultIfEmpty(LearningProfileContext.EMPTY)
+        );
+        return monitorStageMono(
+                "intent.recognize",
+                effectiveCommand,
+                null,
+                requestMonitor,
+                intentRecognitionService.recognize(effectiveCommand, snapshot)
+                // 运行时始终兜底一次：只要需要工具调用，就必须切到 AGENT/ReAct。
+                .map(this::ensureToolAwareExecution)
+                .map(decision -> forceDirectExecution ? preferCoreExecution(decision) : decision)
+        )
+                .doOnNext(requestMonitor::recordDecision)
+                .flatMapMany(decision -> profileContextMono.flatMapMany(profileContext ->
+                        monitorStageMono(
+                                "knowledge.retrieve",
+                                effectiveCommand,
+                                decision,
+                                requestMonitor,
+                                retrieveKnowledge(effectiveCommand, decision, snapshot)
+                        )
+                                .flatMapMany(retrievedDocs -> switch (decision.executionMode()) {
+                                    case DIRECT -> runDirectWithSession(effectiveCommand, snapshot, decision, retrievedDocs, profileContext, requestMonitor);
+                                    case AGENT -> runAgentWithSession(effectiveCommand, snapshot, decision, retrievedDocs, profileContext, requestMonitor);
+                                })
+                                .contextWrite(context -> context.put(CONTEXT_EXECUTION_MODE, decision.executionMode().name()))));
+    }
+
+    private IntentDecision ensureToolAwareExecution(IntentDecision decision) {
+        if (!decision.needToolCall() || decision.executionMode() == ExecutionMode.AGENT) {
+            return decision;
+        }
+        return new IntentDecision(
+                decision.intentType(),
+                decision.resolvedSessionType(),
+                ExecutionMode.AGENT,
+                decision.confidence(),
+                decision.source(),
+                decision.needRetrieval(),
+                true,
+                decision.reason() + "-tool-aware-routing"
+        );
+    }
+
+    private IntentDecision preferCoreExecution(IntentDecision decision) {
+        ExecutionMode preferredMode = selectPreferredExecutionMode(decision);
+        boolean preferredToolCall = preferredMode == ExecutionMode.AGENT && decision.needToolCall();
+        if (decision.executionMode() == preferredMode && decision.needToolCall() == preferredToolCall) {
+            return decision;
+        }
+        return new IntentDecision(
+                decision.intentType(),
+                decision.resolvedSessionType(),
+                preferredMode,
+                decision.confidence(),
+                decision.source(),
+                decision.needRetrieval(),
+                preferredToolCall,
+                decision.reason() + "-core-smart-routing"
+        );
+    }
+
+    private ExecutionMode selectPreferredExecutionMode(IntentDecision decision) {
+        if (decision.needToolCall()) {
+            return ExecutionMode.AGENT;
+        }
+        return switch (decision.intentType()) {
+            case GENERAL_QA, QUESTION_EXPLANATION, FOLLOW_UP, OTHER -> ExecutionMode.DIRECT;
+            case GENERATE_EXERCISE, WRONG_QUESTION_ANALYSIS, REVIEW_SUMMARY, STUDY_PLAN -> ExecutionMode.AGENT;
+        };
     }
 
     private Flux<String> runDirectWithSession(LearningChatCommand command,
                                               SessionMemorySnapshot snapshot,
                                               IntentDecision decision,
-                                              List<Document> retrievedDocs) {
+                                              List<Document> retrievedDocs,
+                                              LearningProfileContext profileContext,
+                                              RequestStageMonitor requestMonitor) {
         ConversationTurn userTurn = new ConversationTurn(
                 SessionMessageRole.USER,
                 command.prompt(),
@@ -189,20 +325,28 @@ public class AiLearningApplicationService {
         StringBuilder assistantContent = new StringBuilder();
         AtomicBoolean persisted = new AtomicBoolean(false);
 
-        Flux<String> directStream = learningChatOrchestrator.streamDirect(buildDirectMessages(command, snapshot, decision, retrievedDocs))
+        // 先把内容持续流给前端，流结束后再把完整的一轮对话落库。
+        Flux<String> generatedStream = monitorVisibleStreamStage(
+                        "response.generate",
+                        command,
+                        decision,
+                        requestMonitor,
+                        learningChatOrchestrator.streamDirect(buildDirectMessages(command, snapshot, decision, retrievedDocs, profileContext))
                 .doOnNext(content -> {
                     if (content != null) {
                         assistantContent.append(content);
                     }
                 })
-                .filter(content -> content != null && !content.isBlank())
-                .concatWith(Mono.defer(() -> persistTurn(
+                .filter(content -> content != null && !content.isBlank()));
+
+        Flux<String> directStream = generatedStream.concatWith(Mono.defer(() -> persistTurn(
                                 command,
                                 userTurn,
                                 assistantContent.toString(),
                                 snapshot,
                                 decision,
-                                retrievedDocs
+                                retrievedDocs,
+                                requestMonitor
                         ))
                         .doOnSuccess(ignored -> persisted.set(true)))
                 .doFinally(signalType -> releaseIfCanceled(command, persisted, signalType));
@@ -213,7 +357,9 @@ public class AiLearningApplicationService {
     private Flux<String> runAgentWithSession(LearningChatCommand command,
                                              SessionMemorySnapshot snapshot,
                                              IntentDecision decision,
-                                             List<Document> retrievedDocs) {
+                                             List<Document> retrievedDocs,
+                                             LearningProfileContext profileContext,
+                                             RequestStageMonitor requestMonitor) {
         ConversationTurn userTurn = new ConversationTurn(
                 SessionMessageRole.USER,
                 command.prompt(),
@@ -224,10 +370,15 @@ public class AiLearningApplicationService {
         StringBuilder tokenAssistantContent = new StringBuilder();
         AtomicBoolean persisted = new AtomicBoolean(false);
 
-        Flux<String> agentStream = learningChatOrchestrator.streamAgent(
-                        buildAgentHistory(command, snapshot, decision, retrievedDocs),
+        Flux<String> generatedStream = monitorVisibleStreamStage(
+                        "response.generate",
+                        command,
+                        decision,
+                        requestMonitor,
+                        learningChatOrchestrator.streamAgent(
+                        buildAgentHistory(command, snapshot, decision, retrievedDocs, profileContext),
                         command.prompt(),
-                        buildAgentBusinessContext(command, snapshot, decision, retrievedDocs)
+                        buildAgentBusinessContext(command, snapshot, decision, retrievedDocs, profileContext)
                 )
                 .doOnNext(event -> collectAssistantContent(event.state(), event.content(), finalAssistantContent, tokenAssistantContent))
                 .doOnNext(event -> log.info("Agent Event: {}", event))
@@ -238,18 +389,108 @@ public class AiLearningApplicationService {
                     }
                     return Mono.empty();
                 })
-                .concatWith(Mono.defer(() -> persistTurn(
+                .transform(this::coalesceVisibleAgentChunks));
+
+        Flux<String> agentStream = generatedStream.concatWith(Mono.defer(() -> persistTurn(
                                 command,
                                 userTurn,
                                 resolveAssistantContent(finalAssistantContent.get(), tokenAssistantContent.toString()),
                                 snapshot,
                                 decision,
-                                retrievedDocs
+                                retrievedDocs,
+                                requestMonitor
                         ))
                         .doOnSuccess(ignored -> persisted.set(true)))
                 .doFinally(signalType -> releaseIfCanceled(command, persisted, signalType));
 
         return monitorResponseStream("agent", command, decision, agentStream);
+    }
+
+    private Flux<String> coalesceVisibleAgentChunks(Flux<String> chunks) {
+        return Flux.create(sink -> {
+            Object monitor = new Object();
+            StringBuilder buffer = new StringBuilder();
+            Scheduler.Worker worker = Schedulers.parallel().createWorker();
+            AtomicReference<reactor.core.Disposable> scheduledFlush = new AtomicReference<>();
+
+            Runnable cancelScheduledFlush = () -> {
+                reactor.core.Disposable disposable = scheduledFlush.getAndSet(null);
+                if (disposable != null) {
+                    disposable.dispose();
+                }
+            };
+
+            Runnable flushBuffer = () -> {
+                String combined = null;
+                synchronized (monitor) {
+                    if (buffer.isEmpty()) {
+                        return;
+                    }
+                    combined = buffer.toString();
+                    buffer.setLength(0);
+                }
+                cancelScheduledFlush.run();
+                sink.next(combined);
+            };
+
+            reactor.core.Disposable upstream = chunks.subscribe(
+                    chunk -> {
+                        if (chunk == null || chunk.isBlank()) {
+                            return;
+                        }
+                        boolean flushNow = false;
+                        synchronized (monitor) {
+                            buffer.append(chunk);
+                            if (shouldFlushVisibleAgentChunk(buffer, chunk)) {
+                                flushNow = true;
+                            } else if (scheduledFlush.get() == null) {
+                                reactor.core.Disposable scheduled = worker.schedule(
+                                        flushBuffer,
+                                        AGENT_VISIBLE_CHUNK_MAX_WAIT.toMillis(),
+                                        TimeUnit.MILLISECONDS
+                                );
+                                if (!scheduledFlush.compareAndSet(null, scheduled)) {
+                                    scheduled.dispose();
+                                }
+                            }
+                        }
+                        if (flushNow) {
+                            flushBuffer.run();
+                        }
+                    },
+                    error -> {
+                        cancelScheduledFlush.run();
+                        sink.error(error);
+                    },
+                    () -> {
+                        flushBuffer.run();
+                        sink.complete();
+                    }
+            );
+
+            sink.onDispose(() -> {
+                cancelScheduledFlush.run();
+                upstream.dispose();
+                worker.dispose();
+            });
+        });
+    }
+
+    private boolean shouldFlushVisibleAgentChunk(StringBuilder buffer, String latestChunk) {
+        return buffer.length() >= AGENT_VISIBLE_CHUNK_MAX_CHARS || containsChunkBoundary(latestChunk);
+    }
+
+    private boolean containsChunkBoundary(String text) {
+        for (int i = 0; i < text.length(); i++) {
+            char ch = text.charAt(i);
+            if (switch (ch) {
+                case '\n', '。', '！', '？', '；', '：', '，', '.', '!', '?', ';' -> true;
+                default -> false;
+            }) {
+                return true;
+            }
+        }
+        return false;
     }
 
     private void releaseIfCanceled(LearningChatCommand command, AtomicBoolean persisted, SignalType signalType) {
@@ -271,12 +512,14 @@ public class AiLearningApplicationService {
                 );
     }
 
+    // 把本轮 user/assistant 消息交给 SessionStorageService，进入数据库和 Redis 的短期记忆写链路。
     private Mono<String> persistTurn(LearningChatCommand command,
                                      ConversationTurn userTurn,
                                      String assistantContent,
                                      SessionMemorySnapshot snapshot,
                                      IntentDecision decision,
-                                     List<Document> retrievedDocs) {
+                                     List<Document> retrievedDocs,
+                                     RequestStageMonitor requestMonitor) {
         String normalizedAssistantContent = assistantContent == null ? "" : assistantContent.trim();
         if (normalizedAssistantContent.isEmpty()) {
             return Mono.error(new IllegalStateException("Assistant content is empty"));
@@ -289,12 +532,18 @@ public class AiLearningApplicationService {
                 buildAssistantTurnMetadata(command, decision)
         );
 
-        return sessionStorageService.appendTurn(
-                        command.conversationId(),
-                        command.requestId(),
-                        new SessionTurnPair(userTurn, assistantTurn),
-                        command.currentTopic(),
-                        buildSessionMetadata(command, snapshot, decision, retrievedDocs)
+        return monitorStageMono(
+                        "turn.persist",
+                        command,
+                        decision,
+                        requestMonitor,
+                        sessionStorageService.appendTurn(
+                                command.conversationId(),
+                                command.requestId(),
+                                new SessionTurnPair(userTurn, assistantTurn),
+                                command.currentTopic(),
+                                buildSessionMetadata(command, snapshot, decision, retrievedDocs)
+                        )
                 )
                 .then(Mono.empty());
     }
@@ -302,9 +551,10 @@ public class AiLearningApplicationService {
     private List<Message> buildAgentHistory(LearningChatCommand command,
                                             SessionMemorySnapshot snapshot,
                                             IntentDecision decision,
-                                            List<Document> retrievedDocs) {
+                                            List<Document> retrievedDocs,
+                                            LearningProfileContext profileContext) {
         List<Message> history = new ArrayList<>();
-        history.add(new SystemMessage(buildSystemPrompt(command, snapshot, decision, retrievedDocs)));
+        history.add(new SystemMessage(buildSystemPrompt(command, snapshot, decision, retrievedDocs, profileContext)));
         for (ConversationTurn turn : snapshot.shortTermMemory()) {
             history.add(toSpringMessage(turn));
         }
@@ -314,8 +564,9 @@ public class AiLearningApplicationService {
     private List<Message> buildDirectMessages(LearningChatCommand command,
                                               SessionMemorySnapshot snapshot,
                                               IntentDecision decision,
-                                              List<Document> retrievedDocs) {
-        List<Message> messages = new ArrayList<>(buildAgentHistory(command, snapshot, decision, retrievedDocs));
+                                              List<Document> retrievedDocs,
+                                              LearningProfileContext profileContext) {
+        List<Message> messages = new ArrayList<>(buildAgentHistory(command, snapshot, decision, retrievedDocs, profileContext));
         messages.add(new UserMessage(command.prompt()));
         return messages;
     }
@@ -323,7 +574,8 @@ public class AiLearningApplicationService {
     private Map<String, Object> buildAgentBusinessContext(LearningChatCommand command,
                                                           SessionMemorySnapshot snapshot,
                                                           IntentDecision decision,
-                                                          List<Document> retrievedDocs) {
+                                                          List<Document> retrievedDocs,
+                                                          LearningProfileContext profileContext) {
         Map<String, Object> context = new LinkedHashMap<>();
         context.put("conversationId", command.conversationId());
         context.put("requestId", command.requestId());
@@ -342,6 +594,9 @@ public class AiLearningApplicationService {
         context.put("retrievedKnowledge", retrievedDocs.stream()
                 .map(this::formatDocumentForContext)
                 .toList());
+        context.put("learningProfileGoal", profileContext.learningGoal());
+        context.put("learningProfileStyle", profileContext.preferredStyle());
+        context.put("sessionFocusTopic", profileContext.currentTopic());
         return context;
     }
 
@@ -391,13 +646,14 @@ public class AiLearningApplicationService {
     private String buildSystemPrompt(LearningChatCommand command,
                                      SessionMemorySnapshot snapshot,
                                      IntentDecision decision,
-                                     List<Document> retrievedDocs) {
+                                     List<Document> retrievedDocs,
+                                     LearningProfileContext profileContext) {
         StringBuilder builder = new StringBuilder(LEARNING_ASSISTANT_SYSTEM_PROMPT);
         builder.append("\n当前会话信息:\n");
         builder.append("- conversationId: ").append(command.conversationId()).append('\n');
         builder.append("- requestId: ").append(command.requestId()).append('\n');
         builder.append("- userId: ").append(defaultText(command.userId())).append('\n');
-        builder.append("- subject: ").append(defaultText(command.subject())).append('\n');
+        builder.append("- subject: ").append(resolveSubject(command.subject())).append('\n');
         builder.append("- sessionType: ").append(decision.resolvedSessionType().name()).append('\n');
         builder.append("- intentType: ").append(decision.intentType().name()).append('\n');
         builder.append("- executionMode: ").append(decision.executionMode().name()).append('\n');
@@ -408,6 +664,10 @@ public class AiLearningApplicationService {
                 : snapshot.session().status().name()).append('\n');
         builder.append("\n任务要求:\n");
         builder.append(buildIntentInstruction(decision));
+        builder.append("\n用户个性化信息:\n");
+        builder.append(formatLearningProfileContext(profileContext));
+        builder.append("\n当前主题块摘要:\n");
+        builder.append(formatActiveTopicBlock(snapshot.activeTopicBlock()));
         builder.append("\n近期对话:\n");
         builder.append(formatShortTermMemory(snapshot.shortTermMemory()));
         builder.append("\n长期记忆:\n");
@@ -419,14 +679,14 @@ public class AiLearningApplicationService {
 
     private String buildIntentInstruction(IntentDecision decision) {
         return switch (decision.intentType()) {
-            case GENERAL_QA -> "- 当前任务是学习问答，先解释概念，再给结论。\n";
-            case QUESTION_EXPLANATION -> "- 当前任务是题目讲解，请输出解题思路、步骤、易错点和简短总结。\n";
-            case GENERATE_EXERCISE -> "- 当前任务是生成练习题，请优先围绕当前主题组织题目与答案解析。\n";
-            case WRONG_QUESTION_ANALYSIS -> "- 当前任务是错题分析，请指出错误原因、正确思路和改进建议。\n";
-            case REVIEW_SUMMARY -> "- 当前任务是复习总结，请提炼重点、易错点和复习顺序。\n";
-            case STUDY_PLAN -> "- 当前任务是学习规划，请给出分阶段目标、执行步骤和检查点。\n";
-            case FOLLOW_UP -> "- 当前任务是追问补充，请延续上文，不要重复无关内容。\n";
-            case OTHER -> "- 当前任务未明确，请保持教学型回答风格。\n";
+            case GENERAL_QA -> "- 当前任务是计算机学习问答，先解释概念，再给结论；涉及代码时说明适用场景与复杂度。\n";
+            case QUESTION_EXPLANATION -> "- 当前任务是计算机题目讲解，请输出解题思路、步骤、关键知识点、复杂度、易错点和简短总结。\n";
+            case GENERATE_EXERCISE -> "- 当前任务是生成计算机学习练习，请围绕当前主题输出题目、参考答案、解析和考察点。\n";
+            case WRONG_QUESTION_ANALYSIS -> "- 当前任务是错题分析，请指出错误原因、正确思路、关联知识点和改进建议。\n";
+            case REVIEW_SUMMARY -> "- 当前任务是复习总结，请提炼重点概念、易错点、知识关联和复习顺序。\n";
+            case STUDY_PLAN -> "- 当前任务是学习规划，请给出适合计算机学习的分阶段目标、实践步骤和检查点。\n";
+            case FOLLOW_UP -> "- 当前任务是追问补充，请延续上文，优先补足用户未理解的计算机知识点，不要重复无关内容。\n";
+            case OTHER -> "- 当前任务未明确，请保持计算机学习场景下的教学型回答风格。\n";
         };
     }
 
@@ -441,6 +701,45 @@ public class AiLearningApplicationService {
                     .append(": ")
                     .append(turn.content())
                     .append('\n');
+        }
+        return builder.toString();
+    }
+
+    private String formatLearningProfileContext(LearningProfileContext profileContext) {
+        if (profileContext == null || profileContext.isEmpty()) {
+            return "无\n";
+        }
+        StringBuilder builder = new StringBuilder();
+        if (profileContext.learningGoal() != null && !profileContext.learningGoal().isBlank()) {
+            builder.append("- 学习目标: ").append(profileContext.learningGoal()).append('\n');
+        }
+        if (profileContext.preferredStyle() != null && !profileContext.preferredStyle().isBlank()) {
+            builder.append("- 讲解偏好: ").append(profileContext.preferredStyle()).append('\n');
+        }
+        if (profileContext.preferredLanguage() != null && !profileContext.preferredLanguage().isBlank()) {
+            builder.append("- 常用语言: ").append(profileContext.preferredLanguage()).append('\n');
+        }
+        if (profileContext.currentTopic() != null && !profileContext.currentTopic().isBlank()) {
+            builder.append("- 当前主题: ").append(profileContext.currentTopic()).append('\n');
+        }
+        if (profileContext.weakPoints() != null && !profileContext.weakPoints().isEmpty()) {
+            builder.append("- 已记录薄弱点: ").append(String.join(", ", profileContext.weakPoints())).append('\n');
+        }
+        if (profileContext.recentTopics() != null && !profileContext.recentTopics().isEmpty()) {
+            builder.append("- 最近主题: ").append(String.join(", ", profileContext.recentTopics())).append('\n');
+        }
+        return builder.isEmpty() ? "无\n" : builder.toString();
+    }
+
+    private String formatActiveTopicBlock(org.example.kbsystemproject.ailearning.domain.session.SessionTopicBlock activeTopicBlock) {
+        if (activeTopicBlock == null || activeTopicBlock.topic() == null || activeTopicBlock.topic().isBlank()) {
+            return "无\n";
+        }
+        StringBuilder builder = new StringBuilder();
+        builder.append("- 主题: ").append(activeTopicBlock.topic()).append('\n');
+        builder.append("- 覆盖轮次: ").append(activeTopicBlock.startTurn()).append('-').append(activeTopicBlock.lastTurn()).append('\n');
+        if (activeTopicBlock.summary() != null && !activeTopicBlock.summary().isBlank()) {
+            builder.append(activeTopicBlock.summary()).append('\n');
         }
         return builder.toString();
     }
@@ -708,8 +1007,8 @@ public class AiLearningApplicationService {
     }
 
     private String formatDocumentSource(Document document) {
-        if (document.getMetadata() == null || document.getMetadata().isEmpty()) {
-            return document.getId() == null ? "unknown" : document.getId();
+        if (document.getMetadata().isEmpty()) {
+            return document.getId();
         }
         Object filename = document.getMetadata().get("filename");
         if (filename != null) {
@@ -803,6 +1102,158 @@ public class AiLearningApplicationService {
         });
     }
 
+    private <T> Mono<T> monitorStageMono(String stage,
+                                         LearningChatCommand command,
+                                         IntentDecision decision,
+                                         RequestStageMonitor requestMonitor,
+                                         Mono<T> source) {
+        return Mono.defer(() -> {
+            long startNanos = System.nanoTime();
+            return source.doFinally(signalType -> recordPipelineStage(
+                    stage,
+                    command,
+                    decision,
+                    requestMonitor,
+                    metricOutcome(signalType),
+                    System.nanoTime() - startNanos
+            ));
+        });
+    }
+
+    private <T> T monitorSynchronousStage(String stage,
+                                          LearningChatCommand command,
+                                          IntentDecision decision,
+                                          RequestStageMonitor requestMonitor,
+                                          Supplier<T> supplier) {
+        long startNanos = System.nanoTime();
+        try {
+            T result = supplier.get();
+            recordPipelineStage(stage, command, decision, requestMonitor, "completed", System.nanoTime() - startNanos);
+            return result;
+        } catch (RuntimeException error) {
+            recordPipelineStage(stage, command, decision, requestMonitor, "failed", System.nanoTime() - startNanos);
+            throw error;
+        }
+    }
+
+    private Flux<String> monitorVisibleStreamStage(String stage,
+                                                   LearningChatCommand command,
+                                                   IntentDecision decision,
+                                                   RequestStageMonitor requestMonitor,
+                                                   Flux<String> source) {
+        return Flux.defer(() -> {
+            long startNanos = System.nanoTime();
+            AtomicBoolean firstChunkRecorded = new AtomicBoolean(false);
+            return source.doOnNext(chunk -> {
+                        if (chunk == null || chunk.isBlank() || !firstChunkRecorded.compareAndSet(false, true)) {
+                            return;
+                        }
+                        recordPipelineStage(
+                                "response.first_chunk",
+                                command,
+                                decision,
+                                requestMonitor,
+                                "completed",
+                                System.nanoTime() - startNanos
+                        );
+                    })
+                    .doFinally(signalType -> {
+                        String outcome = metricOutcome(signalType);
+                        if (!firstChunkRecorded.get()) {
+                            recordPipelineStage(
+                                    "response.first_chunk",
+                                    command,
+                                    decision,
+                                    requestMonitor,
+                                    outcome,
+                                    System.nanoTime() - startNanos
+                            );
+                        }
+                        recordPipelineStage(
+                                stage,
+                                command,
+                                decision,
+                                requestMonitor,
+                                outcome,
+                                System.nanoTime() - startNanos
+                        );
+                    });
+        });
+    }
+
+    private Flux<String> monitorPipelineExecution(LearningChatCommand command,
+                                                  RequestStageMonitor requestMonitor,
+                                                  Flux<String> stream) {
+        return Flux.defer(() -> {
+            Timer.Sample sample = Timer.start(meterRegistry);
+            java.util.concurrent.atomic.AtomicInteger chunkCount = new java.util.concurrent.atomic.AtomicInteger();
+            return stream.doOnNext(ignored -> chunkCount.incrementAndGet())
+                    .doFinally(signalType -> {
+                        IntentDecision decision = requestMonitor.decision();
+                        String outcome = metricOutcome(signalType);
+                        List<Tag> tags = pipelineMetricTags(decision, outcome);
+
+                        Counter.builder("ai.learning.pipeline.requests")
+                                .description("Learning chat pipeline executions")
+                                .tags(tags)
+                                .register(meterRegistry)
+                                .increment();
+
+                        DistributionSummary.builder("ai.learning.pipeline.visible.chunks")
+                                .description("Visible chunks emitted by the full learning chat pipeline")
+                                .tags(tags)
+                                .register(meterRegistry)
+                                .record(chunkCount.get());
+
+                        sample.stop(Timer.builder("ai.learning.pipeline.total.duration")
+                                .description("Learning chat pipeline total duration")
+                                .tags(tags)
+                                .register(meterRegistry));
+
+                        log.info(
+                                "Learning pipeline finished. conversationId={}, requestId={}, outcome={}, chunks={}, stages=[{}]",
+                                command.conversationId(),
+                                command.requestId(),
+                                outcome,
+                                chunkCount.get(),
+                                requestMonitor.describeStages()
+                        );
+                    });
+        });
+    }
+
+    private void recordPipelineStage(String stage,
+                                     LearningChatCommand command,
+                                     IntentDecision decision,
+                                     RequestStageMonitor requestMonitor,
+                                     String outcome,
+                                     long durationNanos) {
+        List<Tag> tags = pipelineStageMetricTags(stage, decision, outcome);
+
+        Counter.builder("ai.learning.pipeline.stage.requests")
+                .description("Learning chat pipeline stage executions")
+                .tags(tags)
+                .register(meterRegistry)
+                .increment();
+
+        Timer.builder("ai.learning.pipeline.stage.duration")
+                .description("Learning chat pipeline stage duration")
+                .tags(tags)
+                .register(meterRegistry)
+                .record(durationNanos, TimeUnit.NANOSECONDS);
+
+        requestMonitor.record(stage, outcome, durationNanos);
+
+        log.info(
+                "Learning pipeline stage finished. conversationId={}, requestId={}, stage={}, outcome={}, durationMs={}",
+                command.conversationId(),
+                command.requestId(),
+                stage,
+                outcome,
+                Duration.ofNanos(durationNanos).toMillis()
+        );
+    }
+
     private void recordRetrievalMetrics(IntentDecision decision,
                                         String outcome,
                                         int documentCount,
@@ -842,7 +1293,27 @@ public class AiLearningApplicationService {
         return List.copyOf(tags);
     }
 
+    private List<Tag> pipelineStageMetricTags(String stage, IntentDecision decision, String outcome) {
+        List<Tag> tags = new ArrayList<>(baseMetricTags(decision));
+        tags.add(Tag.of("stage", stage));
+        tags.add(Tag.of("outcome", outcome));
+        return List.copyOf(tags);
+    }
+
+    private List<Tag> pipelineMetricTags(IntentDecision decision, String outcome) {
+        List<Tag> tags = new ArrayList<>(baseMetricTags(decision));
+        tags.add(Tag.of("outcome", outcome));
+        return List.copyOf(tags);
+    }
+
     private List<Tag> baseMetricTags(IntentDecision decision) {
+        if (decision == null) {
+            return List.of(
+                    Tag.of("executionMode", "pending"),
+                    Tag.of("intentType", "pending"),
+                    Tag.of("retrievalEnabled", "unknown")
+            );
+        }
         return List.of(
                 Tag.of("executionMode", decision.executionMode().name()),
                 Tag.of("intentType", decision.intentType().name()),
@@ -869,6 +1340,41 @@ public class AiLearningApplicationService {
 
     private String defaultText(String value) {
         return value == null || value.isBlank() ? "未提供" : value;
+    }
+
+    private String resolveSubject(String subject) {
+        return subject == null || subject.isBlank() ? "computer-science" : subject;
+    }
+
+    private static final class RequestStageMonitor {
+        private final Map<String, StageMeasurement> stages = new LinkedHashMap<>();
+        private volatile IntentDecision decision;
+
+        private synchronized void record(String stage, String outcome, long durationNanos) {
+            stages.put(stage, new StageMeasurement(outcome, durationNanos));
+        }
+
+        private void recordDecision(IntentDecision decision) {
+            this.decision = decision;
+        }
+
+        private IntentDecision decision() {
+            return decision;
+        }
+
+        private synchronized String describeStages() {
+            if (stages.isEmpty()) {
+                return "none";
+            }
+            StringJoiner joiner = new StringJoiner(", ");
+            stages.forEach((stage, measurement) -> joiner.add(
+                    stage + "=" + Duration.ofNanos(measurement.durationNanos()).toMillis() + "ms(" + measurement.outcome() + ")"
+            ));
+            return joiner.toString();
+        }
+    }
+
+    private record StageMeasurement(String outcome, long durationNanos) {
     }
 
     private static final class RetrievedDocumentCandidate {

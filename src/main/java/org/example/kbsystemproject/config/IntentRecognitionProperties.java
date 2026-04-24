@@ -9,6 +9,7 @@ import org.springframework.context.annotation.Configuration;
 @ConfigurationProperties(prefix = "ai-learning.intent")
 public class IntentRecognitionProperties {
 
+    private boolean enabled = true;
     private boolean llmFallbackEnabled = false;
     private double llmConfidenceThreshold = 0.65D;
     private int followUpPromptLengthThreshold = 24;

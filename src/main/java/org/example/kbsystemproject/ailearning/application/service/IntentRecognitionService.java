@@ -35,6 +35,10 @@ public class IntentRecognitionService {
     }
 
     public Mono<IntentDecision> recognize(LearningChatCommand command, SessionMemorySnapshot snapshot) {
+        if (!properties.isEnabled()) {
+            return Mono.just(disabledDecision(command, snapshot));
+        }
+
         IntentDecision ruleDecision = resolveByRules(command, snapshot);
         if (ruleDecision != null) {
             return Mono.just(ruleDecision);
@@ -283,6 +287,20 @@ public class IntentRecognitionService {
                 true,
                 false,
                 reason
+        );
+    }
+
+    private IntentDecision disabledDecision(LearningChatCommand command,
+                                            SessionMemorySnapshot snapshot) {
+        return decision(
+                IntentType.GENERAL_QA,
+                resolveSessionType(command, snapshot, LearningSessionType.QA),
+                ExecutionMode.DIRECT,
+                1.0D,
+                IntentSource.FALLBACK,
+                false,
+                false,
+                "intent-recognition-disabled"
         );
     }
 

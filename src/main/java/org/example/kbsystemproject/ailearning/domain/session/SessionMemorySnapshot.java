@@ -5,6 +5,12 @@ import java.util.List;
 public record SessionMemorySnapshot(
         LearningSessionRecord session,
         List<ConversationTurn> shortTermMemory,
-        List<LongTermMemoryEntry> longTermMemory
+        List<LongTermMemoryEntry> longTermMemory,
+        SessionTopicBlock activeTopicBlock
 ) {
+    public SessionMemorySnapshot(LearningSessionRecord session,
+                                 List<ConversationTurn> shortTermMemory,
+                                 List<LongTermMemoryEntry> longTermMemory) {
+        this(session, shortTermMemory, longTermMemory, null);
+    }
 }

@@ -67,6 +67,7 @@ public class RedisShortTermMemoryStore {
         this.memoryProperties = memoryProperties;
     }
 
+    // 追加一整轮问答到 Redis，并同步更新该会话的总轮次计数。
     public Mono<Void> appendTurnPair(String conversationId, SessionTurnPair turnPair, long totalTurns) {
         String key = memoryKey(conversationId);
         String counterKey = counterKey(conversationId);
@@ -86,6 +87,7 @@ public class RedisShortTermMemoryStore {
                         .then());
     }
 
+    // 按写入顺序读取当前会话缓存中的最近消息。
     public Mono<List<ConversationTurn>> getRecentTurns(String conversationId) {
         return redisTemplate.opsForList()
                 .range(memoryKey(conversationId), 0, -1)
@@ -93,6 +95,7 @@ public class RedisShortTermMemoryStore {
                 .collectList();
     }
 
+    // 读取 Redis 维护的总轮次，用于和数据库权威值做一致性校验。
     public Mono<Long> getTotalTurns(String conversationId) {
         return redisTemplate.opsForValue()
                 .get(counterKey(conversationId))
@@ -100,10 +103,12 @@ public class RedisShortTermMemoryStore {
                 .defaultIfEmpty(0L);
     }
 
+    // 删除当前会话的短期记忆消息列表和轮次计数器。
     public Mono<Void> clear(String conversationId) {
         return redisTemplate.delete(memoryKey(conversationId), counterKey(conversationId)).then();
     }
 
+    // 用数据库回源的结果整体重建短期记忆缓存。
     public Mono<Void> rebuild(String conversationId, List<ConversationTurn> turns, long totalTurns) {
         if (turns == null || turns.isEmpty()) {
             return clear(conversationId);
@@ -124,6 +129,7 @@ public class RedisShortTermMemoryStore {
                 .then(applyTtl(memoryKey, counterKey, ttl));
     }
 
+    // 给消息列表和轮次计数器统一续上 TTL。
     private Mono<Void> applyTtl(String memoryKey, String counterKey, Duration ttl) {
         if (ttl.isZero() || ttl.isNegative()) {
             return Mono.empty();
@@ -133,6 +139,7 @@ public class RedisShortTermMemoryStore {
                 .then();
     }
 
+    // 只保留最近若干条消息，避免短期上下文无限膨胀。
     private List<ConversationTurn> keepLatest(List<ConversationTurn> turns, int maxMessages) {
         if (turns.size() <= maxMessages) {
             return turns;
@@ -140,6 +147,7 @@ public class RedisShortTermMemoryStore {
         return turns.subList(turns.size() - maxMessages, turns.size());
     }
 
+    // 把 Redis 中的 JSON 反序列化回领域里的 ConversationTurn。
     private Mono<ConversationTurn> deserializeTurn(String raw) {
         return Mono.fromCallable(() -> {
             Map<String, Object> data = objectMapper.readValue(raw, MAP_TYPE);
@@ -154,6 +162,7 @@ public class RedisShortTermMemoryStore {
         });
     }
 
+    // rebuild 过程中使用的无检查异常包装版本。
     private String serializeTurnUnchecked(ConversationTurn turn) {
         try {
             return serializeTurn(turn);
@@ -162,6 +171,7 @@ public class RedisShortTermMemoryStore {
         }
     }
 
+    // 把单条消息序列化成适合存入 Redis 的 JSON 文本。
     private String serializeTurn(ConversationTurn turn) throws Exception {
         Map<String, Object> data = new LinkedHashMap<>();
         data.put("role", turn.role().name());
@@ -171,14 +181,17 @@ public class RedisShortTermMemoryStore {
         return objectMapper.writeValueAsString(data);
     }
 
+    // Redis 内部按“消息条数”存储，因此轮数需要乘以 2。
     private int maxMessages() {
         return Math.max(2, memoryProperties.getShortTerm().getMaxTurns() * 2);
     }
 
+    // 把 TTL 转成 Lua 脚本可直接使用的秒数。
     private long ttlSeconds() {
         return ttlDuration().toSeconds();
     }
 
+    // 读取短期记忆缓存的生存时间配置。
     private Duration ttlDuration() {
         long ttlHours = memoryProperties.getShortTerm().getTtlHours();
         if (ttlHours <= 0) {
@@ -187,10 +200,12 @@ public class RedisShortTermMemoryStore {
         return Duration.ofHours(ttlHours);
     }
 
+    // 生成短期消息列表的 Redis key。
     private String memoryKey(String conversationId) {
         return MEMORY_KEY_PREFIX + conversationId;
     }
 
+    // 生成短期轮次计数器的 Redis key。
     private String counterKey(String conversationId) {
         return TURN_COUNTER_KEY_PREFIX + conversationId;
     }

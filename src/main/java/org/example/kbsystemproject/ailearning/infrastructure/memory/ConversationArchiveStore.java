@@ -29,6 +29,7 @@ public class ConversationArchiveStore {
         this.objectMapper = objectMapper;
     }
 
+    // 把一轮 user/assistant 消息作为长期记忆原文归档到向量表。
     public Mono<Void> archiveTurnPair(String conversationId,
                                       SessionTurnPair turnPair,
                                       float[] userEmbedding,
@@ -39,6 +40,7 @@ public class ConversationArchiveStore {
                 .then(archiveMessage(conversationId, turnPair.assistantTurn(), assistantEmbedding, "MESSAGE", sessionMetadata, turnIndex, 1));
     }
 
+    // 把摘要类内容作为 SUMMARY 记忆写入向量表。
     public Mono<Void> archiveSummary(String conversationId,
                                      String summary,
                                      float[] embedding,
@@ -47,6 +49,7 @@ public class ConversationArchiveStore {
         return archiveMessage(conversationId, turn, embedding, "SUMMARY", metadata, null, null);
     }
 
+    // 在向量表中检索当前会话的长期记忆，按相似度倒序返回。
     public Mono<List<LongTermMemoryEntry>> searchRelevantMemories(String conversationId,
                                                                   float[] queryEmbedding,
                                                                   List<String> memoryTypes,
@@ -93,10 +96,12 @@ public class ConversationArchiveStore {
                 .collectList();
     }
 
+    // 兼容 UUID/文本等不同主键类型的统一读取方式。
     private String readIdentifier(Object rawId) {
         return rawId == null ? null : rawId.toString();
     }
 
+    // 从向量归档表读取最近原始消息，通常作为长期归档回查能力。
     public Mono<List<ConversationTurn>> loadRecentTurns(String conversationId, int limit) {
         return databaseClient.sql("""
                         SELECT content, metadata, created_at, turn_index, message_index
@@ -139,6 +144,7 @@ public class ConversationArchiveStore {
                 });
     }
 
+    // 按轮次范围从向量归档表回放原始消息。
     public Mono<List<ConversationTurn>> loadTurnsByTurnRange(String conversationId, int startTurnInclusive, int endTurnInclusive) {
         return databaseClient.sql("""
                         SELECT content, metadata, created_at, turn_index, message_index
@@ -178,6 +184,7 @@ public class ConversationArchiveStore {
                 .collectList();
     }
 
+    // 向向量表写入一条归档消息；带 turnIndex 时可做幂等去重。
     private Mono<Void> archiveMessage(String conversationId,
                                       ConversationTurn turn,
                                       float[] embedding,
@@ -210,6 +217,7 @@ public class ConversationArchiveStore {
                 .flatMap(spec -> spec.fetch().rowsUpdated().then());
     }
 
+    // 给可空字段统一做 bind/bindNull 处理。
     private <T> Mono<DatabaseClient.GenericExecuteSpec> bindNullable(DatabaseClient.GenericExecuteSpec spec,
                                                                      String name,
                                                                      T value,
@@ -220,6 +228,7 @@ public class ConversationArchiveStore {
         return Mono.just(spec.bind(name, value));
     }
 
+    // 构造归档入库时的 JSON 元数据。
     private Map<String, Object> buildMetadata(ConversationTurn turn, Map<String, Object> sessionMetadata) {
         Map<String, Object> metadata = new LinkedHashMap<>();
         metadata.put("role", turn.role().name());
@@ -231,6 +240,7 @@ public class ConversationArchiveStore {
         return metadata;
     }
 
+    // 解析向量表里存储的 JSON 元数据。
     private Map<String, Object> parseMetadata(String rawJson) {
         if (rawJson == null || rawJson.isBlank()) {
             return Map.of();
@@ -242,6 +252,7 @@ public class ConversationArchiveStore {
         }
     }
 
+    // 把 float[] 转成 pgvector 可识别的文本格式。
     private String floatArrayToVectorString(float[] vector) {
         StringBuilder sb = new StringBuilder("[");
         for (int i = 0; i < vector.length; i++) {

@@ -2,6 +2,7 @@ package org.example.kbsystemproject.ailearning.application.service;
 
 import lombok.extern.slf4j.Slf4j;
 import org.example.kbsystemproject.ailearning.domain.session.ConversationTurn;
+import org.example.kbsystemproject.ailearning.domain.session.LearningSessionRecord;
 import org.example.kbsystemproject.ailearning.domain.session.SessionMemoryTaskRecord;
 import org.example.kbsystemproject.ailearning.domain.session.SessionTurnPair;
 import org.example.kbsystemproject.ailearning.infrastructure.memory.ConversationArchiveStore;
@@ -16,6 +17,7 @@ import reactor.core.scheduler.Scheduler;
 
 import java.net.InetAddress;
 import java.time.OffsetDateTime;
+import java.util.List;
 import java.util.Map;
 import java.util.UUID;
 import java.util.concurrent.atomic.AtomicBoolean;
@@ -30,6 +32,7 @@ public class SessionMemorySynchronizationService {
     private final EmbeddingModel embeddingModel;
     private final MemoryProperties memoryProperties;
     private final Scheduler aiBlockingScheduler;
+    private final SessionCompressionService sessionCompressionService;
     private final AtomicBoolean running = new AtomicBoolean(false);
     private final String ownerInstance;
 
@@ -38,13 +41,15 @@ public class SessionMemorySynchronizationService {
                                                ConversationArchiveStore conversationArchiveStore,
                                                EmbeddingModel embeddingModel,
                                                MemoryProperties memoryProperties,
-                                               @Qualifier("aiBlockingScheduler") Scheduler aiBlockingScheduler) {
+                                               @Qualifier("aiBlockingScheduler") Scheduler aiBlockingScheduler,
+                                               SessionCompressionService sessionCompressionService) {
         this.learningSessionMemoryTaskStore = learningSessionMemoryTaskStore;
         this.sessionStorageService = sessionStorageService;
         this.conversationArchiveStore = conversationArchiveStore;
         this.embeddingModel = embeddingModel;
         this.memoryProperties = memoryProperties;
         this.aiBlockingScheduler = aiBlockingScheduler;
+        this.sessionCompressionService = sessionCompressionService;
         this.ownerInstance = resolveOwnerInstance();
     }
 
@@ -74,8 +79,15 @@ public class SessionMemorySynchronizationService {
     }
 
     private Mono<Void> processTask(SessionMemoryTaskRecord task) {
-        return sessionStorageService.loadTurnsByTurnRange(task.conversationId(), task.turnIndex(), task.turnIndex())
-                .flatMap(turns -> {
+        return Mono.zip(
+                        sessionStorageService.loadTurnsByTurnRange(task.conversationId(), task.turnIndex(), task.turnIndex()),
+                        sessionStorageService.getSession(task.conversationId()),
+                        sessionStorageService.loadRecentTurns(task.conversationId(), memoryProperties.getCompression().getRecentRawTurns() * 2)
+                )
+                .flatMap(tuple -> {
+                    List<ConversationTurn> turns = tuple.getT1();
+                    LearningSessionRecord session = tuple.getT2();
+                    List<ConversationTurn> recentTurns = tuple.getT3();
                     if (turns.size() < 2) {
                         return Mono.error(new IllegalStateException("Missing persisted turn pair for task " + task.id()));
                     }
@@ -85,14 +97,24 @@ public class SessionMemorySynchronizationService {
                             Map.of("requestId", task.requestId()),
                             task.turnIndex()
                     );
-                    return Mono.zip(embed(userTurn.content()), embed(assistantTurn.content()))
-                            .flatMap(tuple -> conversationArchiveStore.archiveTurnPair(
+                    Mono<Void> archiveTurnPair = memoryProperties.getLongTerm().isEnabled()
+                            ? Mono.zip(embed(userTurn.content()), embed(assistantTurn.content()))
+                            .flatMap(embeddingTuple -> conversationArchiveStore.archiveTurnPair(
                                     task.conversationId(),
                                     new SessionTurnPair(userTurn, assistantTurn),
-                                    tuple.getT1(),
-                                    tuple.getT2(),
+                                    embeddingTuple.getT1(),
+                                    embeddingTuple.getT2(),
                                     metadata,
                                     task.turnIndex()
+                            ))
+                            : Mono.empty();
+                    return archiveTurnPair
+                            .then(sessionCompressionService.handleTurn(
+                                    session,
+                                    task.turnIndex(),
+                                    userTurn,
+                                    assistantTurn,
+                                    recentTurns
                             ))
                             .then(sessionStorageService.maybeArchiveSummary(task.conversationId(), task.turnIndex()));
                 })

@@ -17,6 +17,7 @@ public class LearningSessionRequestStore {
         this.databaseClient = databaseClient;
     }
 
+    // 按会话 + 请求 ID 读取请求状态记录，用于幂等和冲突判断。
     public Mono<SessionRequestRecord> findByConversationIdAndRequestId(String conversationId, String requestId) {
         return databaseClient.sql("""
                         SELECT id, conversation_id, request_id, status, owner_instance, lease_expires_at,
@@ -31,6 +32,7 @@ public class LearningSessionRequestStore {
                 .one();
     }
 
+    // 新请求进入 PROCESSING；如果记录已存在且未成功，则续租并接管处理权。
     public Mono<SessionRequestRecord> upsertProcessing(String conversationId,
                                                        String requestId,
                                                        String ownerInstance,
@@ -62,6 +64,7 @@ public class LearningSessionRequestStore {
                 .one();
     }
 
+    // 请求成功完成后写回最终轮次和 assistant 结果。
     public Mono<Void> markSucceeded(String conversationId,
                                     String requestId,
                                     int turnIndex,
@@ -87,6 +90,7 @@ public class LearningSessionRequestStore {
                 .then();
     }
 
+    // 请求失败时写回错误信息，并清掉租约字段。
     public Mono<Void> markFailed(String conversationId,
                                  String requestId,
                                  String errorMessage) {
@@ -109,6 +113,7 @@ public class LearningSessionRequestStore {
                 .then();
     }
 
+    // 把数据库行映射成请求状态对象。
     private SessionRequestRecord mapRecord(io.r2dbc.spi.Readable row) {
         return new SessionRequestRecord(
                 row.get("id", Long.class),
@@ -125,6 +130,7 @@ public class LearningSessionRequestStore {
         );
     }
 
+    // 限制错误文本长度，避免状态表被异常堆栈灌爆。
     private String truncate(String value) {
         if (value == null || value.length() <= 1000) {
             return value;

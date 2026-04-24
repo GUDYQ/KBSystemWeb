@@ -25,6 +25,7 @@ public class SessionLockService {
         this.memoryProperties = memoryProperties;
     }
 
+    // 对同一 conversationId 的写操作做串行化，避免并发写乱 turnIndex 顺序。
     public <T> Mono<T> execute(String conversationId, Supplier<Mono<T>> action) {
         if (!memoryProperties.getConcurrency().isEnabled()) {
             return action.get();
@@ -43,6 +44,7 @@ public class SessionLockService {
         });
     }
 
+    // 获取分布式锁；获取失败时抛错，由上层决定是否降级。
     private Mono<RLockReactive> acquire(RLockReactive lock, String conversationId) {
         MemoryProperties.Concurrency concurrency = memoryProperties.getConcurrency();
         return lock.tryLock(concurrency.getLockWaitMillis(), concurrency.getLockLeaseMillis(), TimeUnit.MILLISECONDS)
@@ -51,12 +53,14 @@ public class SessionLockService {
                         : Mono.error(new IllegalStateException("Failed to acquire session lock: " + conversationId)));
     }
 
+    // 释放锁；如果锁已经过期或不归当前线程持有，则静默忽略。
     private Mono<Void> release(RLockReactive lock) {
         return lock.unlock()
                 .onErrorResume(IllegalMonitorStateException.class, error -> Mono.empty())
                 .then();
     }
 
+    // 生成会话级分布式锁的 Redis key。
     private String lockKey(String conversationId) {
         return LOCK_KEY_PREFIX + conversationId;
     }

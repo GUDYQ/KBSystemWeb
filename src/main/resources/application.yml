@@ -102,11 +102,12 @@ memory:
     max-turns: 10
     ttl-hours: 72
   long-term:
+    enabled: false
     top-k: 5
     similarity-threshold: 0.45
     time-decay-lambda: 0.03
   summary:
-    enabled: true
+    enabled: false
     trigger-turns: 20
   concurrency:
     enabled: true
@@ -122,6 +123,7 @@ memory:
 
 ai-learning:
   intent:
+    enabled: false
     llm-fallback-enabled: false
     llm-confidence-threshold: 0.65
     follow-up-prompt-length-threshold: 24

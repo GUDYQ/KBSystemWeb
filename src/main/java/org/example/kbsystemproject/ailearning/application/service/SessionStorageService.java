@@ -5,13 +5,16 @@ import org.example.kbsystemproject.ailearning.domain.session.ConversationTurn;
 import org.example.kbsystemproject.ailearning.domain.session.LearningSessionRecord;
 import org.example.kbsystemproject.ailearning.domain.session.LongTermMemoryEntry;
 import org.example.kbsystemproject.ailearning.domain.session.SessionMemorySnapshot;
+import org.example.kbsystemproject.ailearning.domain.session.SessionTopicBlock;
 import org.example.kbsystemproject.ailearning.domain.session.SessionTurnPair;
 import org.example.kbsystemproject.ailearning.infrastructure.memory.ConversationArchiveStore;
 import org.example.kbsystemproject.ailearning.infrastructure.memory.RedisShortTermMemoryStore;
+import org.example.kbsystemproject.ailearning.infrastructure.persistence.profile.LearningProfileTaskStore;
 import org.example.kbsystemproject.ailearning.infrastructure.persistence.session.LearningSessionMemoryTaskStore;
 import org.example.kbsystemproject.ailearning.infrastructure.persistence.session.LearningSessionMessageStore;
 import org.example.kbsystemproject.ailearning.infrastructure.persistence.session.LearningSessionRequestStore;
 import org.example.kbsystemproject.ailearning.infrastructure.persistence.session.LearningSessionStore;
+import org.example.kbsystemproject.ailearning.infrastructure.persistence.session.LearningSessionTopicBlockStore;
 import org.example.kbsystemproject.config.MemoryProperties;
 import org.springframework.ai.chat.client.ChatClient;
 import org.springframework.ai.embedding.EmbeddingModel;
@@ -34,6 +37,8 @@ public class SessionStorageService {
     private final LearningSessionRequestStore learningSessionRequestStore;
     private final LearningSessionMessageStore learningSessionMessageStore;
     private final LearningSessionMemoryTaskStore learningSessionMemoryTaskStore;
+    private final LearningProfileTaskStore learningProfileTaskStore;
+    private final LearningSessionTopicBlockStore learningSessionTopicBlockStore;
     private final RedisShortTermMemoryStore shortTermMemoryStore;
     private final ConversationArchiveStore conversationArchiveStore;
     private final EmbeddingModel embeddingModel;
@@ -47,6 +52,8 @@ public class SessionStorageService {
                                  LearningSessionRequestStore learningSessionRequestStore,
                                  LearningSessionMessageStore learningSessionMessageStore,
                                  LearningSessionMemoryTaskStore learningSessionMemoryTaskStore,
+                                 LearningProfileTaskStore learningProfileTaskStore,
+                                 LearningSessionTopicBlockStore learningSessionTopicBlockStore,
                                  RedisShortTermMemoryStore shortTermMemoryStore,
                                  ConversationArchiveStore conversationArchiveStore,
                                  EmbeddingModel embeddingModel,
@@ -59,6 +66,8 @@ public class SessionStorageService {
         this.learningSessionRequestStore = learningSessionRequestStore;
         this.learningSessionMessageStore = learningSessionMessageStore;
         this.learningSessionMemoryTaskStore = learningSessionMemoryTaskStore;
+        this.learningProfileTaskStore = learningProfileTaskStore;
+        this.learningSessionTopicBlockStore = learningSessionTopicBlockStore;
         this.shortTermMemoryStore = shortTermMemoryStore;
         this.conversationArchiveStore = conversationArchiveStore;
         this.embeddingModel = embeddingModel;
@@ -69,6 +78,7 @@ public class SessionStorageService {
         this.sessionLockService = sessionLockService;
     }
 
+    // 打开或复用会话主记录，确保后续短期记忆读写都有会话上下文。
     public Mono<LearningSessionRecord> openSession(SessionOpenCommand command) {
         return learningSessionStore.getOrCreate(
                 command.conversationId(),
@@ -80,6 +90,7 @@ public class SessionStorageService {
         );
     }
 
+    // 对外暴露的写入入口：先做会话级串行化，再执行数据库落库和缓存同步。
     public Mono<Void> appendTurn(String conversationId,
                                  String requestId,
                                  SessionTurnPair turnPair,
@@ -89,18 +100,26 @@ public class SessionStorageService {
     }
 
     public Mono<Void> archiveSummary(String conversationId, String summary, Map<String, Object> metadata) {
+        if (!memoryProperties.getLongTerm().isEnabled()) {
+            return Mono.empty();
+        }
         return embed(summary)
                 .flatMap(embedding -> conversationArchiveStore.archiveSummary(conversationId, summary, embedding, metadata))
                 .then(learningSessionStore.touch(conversationId, null));
     }
 
+    // 读取当前会话的短期记忆，只返回最近若干轮上下文。
     public Mono<List<ConversationTurn>> getShortTermMemory(String conversationId) {
         return learningSessionStore.getByConversationId(conversationId)
                 .flatMap(this::resolveShortTermMemory)
                 .defaultIfEmpty(List.of());
     }
 
+    // 长期记忆查询入口；当前调试短期链路时会被配置开关直接短路。
     public Mono<List<LongTermMemoryEntry>> getLongTermMemory(String conversationId, String query) {
+        if (!memoryProperties.getLongTerm().isEnabled()) {
+            return Mono.just(List.of());
+        }
         if (query == null || query.isBlank()) {
             return Mono.just(List.of());
         }
@@ -117,21 +136,31 @@ public class SessionStorageService {
                         .toList());
     }
 
+    // 组装一次对话所需的上下文快照：会话信息、短期记忆、长期记忆和当前主题块。
     public Mono<SessionMemorySnapshot> loadSnapshot(String conversationId, String query) {
         Mono<LearningSessionRecord> sessionMono = learningSessionStore.getByConversationId(conversationId).cache();
         Mono<List<ConversationTurn>> shortTermMono = sessionMono.flatMap(this::resolveShortTermMemory);
         Mono<List<LongTermMemoryEntry>> longTermMono = getLongTermMemory(conversationId, query);
+        Mono<SessionTopicBlock> activeTopicBlockMono = learningSessionTopicBlockStore.findActiveByConversationId(conversationId)
+                .defaultIfEmpty(new SessionTopicBlock(null, conversationId, null, "EMPTY", 0, 0, 0, 0, 0, 0, null, null));
 
-        return Mono.zip(sessionMono, shortTermMono, longTermMono)
-                .map(tuple -> new SessionMemorySnapshot(tuple.getT1(), tuple.getT2(), tuple.getT3()));
+        return Mono.zip(sessionMono, shortTermMono, longTermMono, activeTopicBlockMono)
+                .map(tuple -> new SessionMemorySnapshot(tuple.getT1(), tuple.getT2(), tuple.getT3(), tuple.getT4()));
     }
 
+    // 以 learning_session.turn_count 作为权威轮次来源。
     public Mono<Long> getTurnCount(String conversationId) {
         return learningSessionStore.getByConversationId(conversationId)
                 .map(session -> Long.valueOf(session.turnCount()))
                 .defaultIfEmpty(0L);
     }
 
+    // 按会话 ID 读取会话主记录。
+    public Mono<LearningSessionRecord> getSession(String conversationId) {
+        return learningSessionStore.getByConversationId(conversationId);
+    }
+
+    // 主动清空 Redis 里的短期记忆缓存，不影响数据库中的历史消息。
     public Mono<Void> clearShortTermMemory(String conversationId) {
         return shortTermMemoryStore.clear(conversationId)
                 .onErrorResume(error -> {
@@ -140,6 +169,7 @@ public class SessionStorageService {
                 });
     }
 
+    // 关闭会话时顺带清掉短期缓存，避免旧上下文继续参与后续推理。
     public Mono<Void> closeSession(String conversationId) {
         return sessionLockService.execute(conversationId, () -> learningSessionStore.close(conversationId)
                 .then(clearShortTermMemory(conversationId))
@@ -147,10 +177,17 @@ public class SessionStorageService {
                 .then();
     }
 
+    // 按轮次范围从数据库回放消息，供异步任务或摘要流程使用。
     public Mono<List<ConversationTurn>> loadTurnsByTurnRange(String conversationId, int startTurnInclusive, int endTurnInclusive) {
         return learningSessionMessageStore.loadTurnsByTurnRange(conversationId, startTurnInclusive, endTurnInclusive);
     }
 
+    // 从数据库读取最近若干条消息，通常作为 Redis 失效时的回源结果。
+    public Mono<List<ConversationTurn>> loadRecentTurns(String conversationId, int limit) {
+        return learningSessionMessageStore.loadRecentTurns(conversationId, limit);
+    }
+
+    // 用数据库里的最近消息重建 Redis 短期记忆缓存。
     private Mono<Void> recoverShortTermMemory(String conversationId) {
         return learningSessionMessageStore.loadRecentTurns(
                         conversationId,
@@ -164,6 +201,7 @@ public class SessionStorageService {
                         )));
     }
 
+    // 短期记忆写入的核心事务：分配 turnIndex、写消息表、投递异步任务、更新请求状态。
     private Mono<Void> appendTurnInternal(String conversationId,
                                           String requestId,
                                           SessionTurnPair turnPair,
@@ -175,6 +213,7 @@ public class SessionStorageService {
                                     SessionTurnPair indexedTurnPair = indexTurnPair(turnPair, turnIndex);
                                     return learningSessionMessageStore.saveTurnPair(conversationId, requestId, indexedTurnPair, turnIndex)
                                             .then(learningSessionMemoryTaskStore.enqueueTurnSync(conversationId, requestId, turnIndex))
+                                            .then(learningProfileTaskStore.enqueueTurnSync(conversationId, requestId, turnIndex))
                                             .then(learningSessionRequestStore.markSucceeded(
                                                     conversationId,
                                                     requestId,
@@ -189,6 +228,7 @@ public class SessionStorageService {
                 .then();
     }
 
+    // 事务提交后把新的一轮同步进 Redis；失败时降级为仅数据库可用。
     private Mono<Integer> synchronizeShortTermMemory(String conversationId, PersistedTurn persistedTurn) {
         return shortTermMemoryStore.appendTurnPair(conversationId, persistedTurn.turnPair(), persistedTurn.turnIndex())
                 .thenReturn(persistedTurn.turnIndex())
@@ -198,6 +238,7 @@ public class SessionStorageService {
                 });
     }
 
+    // 短期记忆读取策略：先读 Redis，校验不一致时回源数据库并自动重建缓存。
     private Mono<List<ConversationTurn>> resolveShortTermMemory(LearningSessionRecord session) {
         return Mono.zip(
                         shortTermMemoryStore.getRecentTurns(session.conversationId()),
@@ -235,6 +276,7 @@ public class SessionStorageService {
                 ));
     }
 
+    // 用数据库权威轮次校验 Redis 是否可直接信任。
     private boolean isCacheConsistent(List<ConversationTurn> cachedTurns, long cachedTurnCount, long authoritativeTurnCount) {
         if (authoritativeTurnCount == 0) {
             return cachedTurns.isEmpty() && cachedTurnCount == 0;
@@ -244,6 +286,7 @@ public class SessionStorageService {
                 && latestTurnIndex(cachedTurns) == authoritativeTurnCount;
     }
 
+    // 从消息元数据中找出当前缓存包含的最大 turnIndex。
     private int latestTurnIndex(List<ConversationTurn> turns) {
         return turns.stream()
                 .map(ConversationTurn::metadata)
@@ -254,6 +297,7 @@ public class SessionStorageService {
                 .orElse(-1);
     }
 
+    // 给异步处理链统一补齐 turnIndex 等公共元数据。
     public Map<String, Object> enrichMetadata(Map<String, Object> sessionMetadata, int turnIndex) {
         Map<String, Object> metadata = new HashMap<>();
         if (sessionMetadata != null) {
@@ -263,6 +307,7 @@ public class SessionStorageService {
         return metadata;
     }
 
+    // 把一轮问答拆成“用户消息 + 助手消息”，并统一注入轮次编号。
     private SessionTurnPair indexTurnPair(SessionTurnPair turnPair, int turnIndex) {
         return new SessionTurnPair(
                 indexTurn(turnPair.userTurn(), turnIndex, 0),
@@ -270,6 +315,7 @@ public class SessionStorageService {
         );
     }
 
+    // 给单条消息补齐 turnIndex 和 messageIndex，方便数据库/Redis 排序。
     private ConversationTurn indexTurn(ConversationTurn turn, int turnIndex, int messageIndex) {
         Map<String, Object> metadata = new LinkedHashMap<>();
         if (turn.metadata() != null) {
@@ -280,7 +326,11 @@ public class SessionStorageService {
         return new ConversationTurn(turn.role(), turn.content(), turn.createdAt(), metadata);
     }
 
+    // 定期把较旧的消息片段压缩成摘要归档；当前短期记忆调试模式下默认关闭。
     public Mono<Void> maybeArchiveSummary(String conversationId, int turnIndex) {
+        if (!memoryProperties.getLongTerm().isEnabled()) {
+            return Mono.empty();
+        }
         if (!memoryProperties.getSummary().isEnabled()) {
             return Mono.empty();
         }
@@ -314,6 +364,7 @@ public class SessionStorageService {
                 });
     }
 
+    // 调用大模型把指定轮次区间整理成适合长期检索的摘要。
     private Mono<String> summarizeTurns(String conversationId,
                                         LearningSessionRecord session,
                                         List<ConversationTurn> turns,
@@ -359,11 +410,13 @@ public class SessionStorageService {
                 .filter(summary -> !summary.isBlank());
     }
 
+    // 统一封装 embedding 调用，避免阻塞 Reactor 主线程。
     private Mono<float[]> embed(String text) {
         return Mono.fromCallable(() -> embeddingModel.embed(text))
                 .subscribeOn(aiBlockingScheduler);
     }
 
+    // 组装摘要 prompt 时对空字段做兜底。
     private String defaultText(String value) {
         return value == null || value.isBlank() ? "N/A" : value;
     }

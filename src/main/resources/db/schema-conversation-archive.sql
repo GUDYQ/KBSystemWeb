@@ -1,3 +1,14 @@
+CREATE EXTENSION IF NOT EXISTS vector;
+
+CREATE EXTENSION IF NOT EXISTS "uuid-ossp";
+
+CREATE TABLE IF NOT EXISTS vector_store_conversation (
+    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    content TEXT,
+    metadata JSON,
+    embedding vector(768)
+);
+
 ALTER TABLE vector_store_conversation
 ADD COLUMN IF NOT EXISTS conversation_id VARCHAR(128);
 

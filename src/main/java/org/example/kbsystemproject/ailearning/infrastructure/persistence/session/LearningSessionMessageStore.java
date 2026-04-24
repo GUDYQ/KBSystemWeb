@@ -28,11 +28,13 @@ public class LearningSessionMessageStore {
         this.objectMapper = objectMapper;
     }
 
+    // 把一轮问答拆成两条消息持久化到 learning_session_message。
     public Mono<Void> saveTurnPair(String conversationId, String requestId, SessionTurnPair turnPair, int turnIndex) {
         return saveMessage(conversationId, requestId, turnPair.userTurn(), turnIndex, 0)
                 .then(saveMessage(conversationId, requestId, turnPair.assistantTurn(), turnIndex, 1));
     }
 
+    // 按 turnIndex 倒序读取最近消息，再翻转回自然对话顺序。
     public Mono<List<ConversationTurn>> loadRecentTurns(String conversationId, int limit) {
         return databaseClient.sql("""
                         SELECT role, content, message_metadata, created_at, turn_index, message_index
@@ -59,6 +61,7 @@ public class LearningSessionMessageStore {
                 });
     }
 
+    // 按轮次区间读取完整对话片段，常用于摘要或异步补偿处理。
     public Mono<List<ConversationTurn>> loadTurnsByTurnRange(String conversationId, int startTurnInclusive, int endTurnInclusive) {
         return databaseClient.sql("""
                         SELECT role, content, message_metadata, created_at, turn_index, message_index
@@ -82,6 +85,7 @@ public class LearningSessionMessageStore {
                 .collectList();
     }
 
+    // 根据 requestId 找到这一轮最终 assistant 内容，供幂等返回或任务查询使用。
     public Mono<String> findAssistantContent(String conversationId, String requestId) {
         return databaseClient.sql("""
                         SELECT content
@@ -98,6 +102,7 @@ public class LearningSessionMessageStore {
                 .one();
     }
 
+    // 保存单条消息，并用 (conversationId, turnIndex, messageIndex) 做幂等保护。
     private Mono<Void> saveMessage(String conversationId,
                                    String requestId,
                                    ConversationTurn turn,
@@ -126,6 +131,7 @@ public class LearningSessionMessageStore {
                         .then());
     }
 
+    // 把数据库行转换为领域里的 ConversationTurn，并补齐排序元数据。
     private ConversationTurn toTurn(String role,
                                     String content,
                                     String rawMetadata,
@@ -143,6 +149,7 @@ public class LearningSessionMessageStore {
         return new ConversationTurn(SessionMessageRole.valueOf(role), content, createdAt, mergedMetadata);
     }
 
+    // 解析存储在 JSONB 中的消息元数据。
     private Map<String, Object> parseMetadata(String rawJson) {
         if (rawJson == null || rawJson.isBlank()) {
             return Map.of();

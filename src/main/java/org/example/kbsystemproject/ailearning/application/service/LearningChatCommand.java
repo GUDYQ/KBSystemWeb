@@ -12,6 +12,19 @@ public record LearningChatCommand(
         String currentTopic,
         String prompt
 ) {
+    public LearningChatCommand withCurrentTopic(String currentTopic) {
+        return new LearningChatCommand(
+                conversationId,
+                requestId,
+                userId,
+                subject,
+                sessionType,
+                learningGoal,
+                currentTopic,
+                prompt
+        );
+    }
+
     public SessionOpenCommand toSessionOpenCommand() {
         return new SessionOpenCommand(
                 conversationId,

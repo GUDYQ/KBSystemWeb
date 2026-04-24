@@ -9,8 +9,10 @@ import reactor.core.publisher.Mono;
 @Repository
 public interface LearningSessionRepository extends ReactiveCrudRepository<LearningSessionEntity, Long> {
 
+    // 按会话 ID 读取主记录。
     Mono<LearningSessionEntity> findFirstByConversationId(String conversationId);
 
+    // 原子递增 turn_count，并返回新的轮次编号。
     @Query("""
             UPDATE learning_session
             SET turn_count = turn_count + 1,
@@ -23,6 +25,7 @@ public interface LearningSessionRepository extends ReactiveCrudRepository<Learni
             """)
     Mono<Integer> reserveNextTurn(String conversationId, String currentTopic, String status);
 
+    // 刷新活跃时间，并可选更新当前主题。
     @Modifying
     @Query("""
             UPDATE learning_session
@@ -33,6 +36,7 @@ public interface LearningSessionRepository extends ReactiveCrudRepository<Learni
             """)
     Mono<Integer> touch(String conversationId, String currentTopic);
 
+    // 把会话轮次重置为 0。
     @Modifying
     @Query("""
             UPDATE learning_session
@@ -43,6 +47,7 @@ public interface LearningSessionRepository extends ReactiveCrudRepository<Learni
             """)
     Mono<Integer> resetTurnCount(String conversationId);
 
+    // 更新会话状态，例如 ACTIVE/CLOSED。
     @Modifying
     @Query("""
             UPDATE learning_session
@@ -53,6 +58,7 @@ public interface LearningSessionRepository extends ReactiveCrudRepository<Learni
             """)
     Mono<Integer> updateStatus(String conversationId, String status);
 
+    // 尝试抢占当前会话的处理槽位，成功时返回 conversationId。
     @Query("""
             UPDATE learning_session
             SET processing_request_id = :requestId,
@@ -74,6 +80,7 @@ public interface LearningSessionRepository extends ReactiveCrudRepository<Learni
                                        java.time.OffsetDateTime leaseExpiresAt,
                                        String status);
 
+    // 释放当前请求持有的处理槽位。
     @Modifying
     @Query("""
             UPDATE learning_session
@@ -86,6 +93,7 @@ public interface LearningSessionRepository extends ReactiveCrudRepository<Learni
             """)
     Mono<Integer> releaseProcessingSlot(String conversationId, String requestId);
 
+    // 更新最近一次已完成摘要的轮次。
     @Modifying
     @Query("""
             UPDATE learning_session

@@ -1,6 +1,6 @@
-package org.example.kbsystemproject.ailearning.infrastructure.persistence.session;
+package org.example.kbsystemproject.ailearning.infrastructure.persistence.profile;
 
-import org.example.kbsystemproject.ailearning.domain.session.SessionMemoryTaskRecord;
+import org.example.kbsystemproject.ailearning.domain.profile.LearningProfileTaskRecord;
 import org.example.kbsystemproject.ailearning.domain.session.SessionMemoryTaskStatus;
 import org.springframework.r2dbc.core.DatabaseClient;
 import org.springframework.stereotype.Repository;
@@ -10,18 +10,17 @@ import reactor.core.publisher.Mono;
 import java.time.OffsetDateTime;
 
 @Repository
-public class LearningSessionMemoryTaskStore {
+public class LearningProfileTaskStore {
 
     private final DatabaseClient databaseClient;
 
-    public LearningSessionMemoryTaskStore(DatabaseClient databaseClient) {
+    public LearningProfileTaskStore(DatabaseClient databaseClient) {
         this.databaseClient = databaseClient;
     }
 
-    // 为一轮新消息投递“记忆同步任务”，供异步链路处理。
     public Mono<Void> enqueueTurnSync(String conversationId, String requestId, int turnIndex) {
         return databaseClient.sql("""
-                        INSERT INTO learning_session_memory_task (
+                        INSERT INTO learning_profile_task (
                             conversation_id, request_id, turn_index, status, available_at, created_at, updated_at
                         )
                         VALUES (
@@ -38,17 +37,16 @@ public class LearningSessionMemoryTaskStore {
                 .then();
     }
 
-    // 批量抢占待处理任务，支持失败重试和租约过期回收。
-    public Flux<SessionMemoryTaskRecord> claimBatch(int limit, String ownerInstance, OffsetDateTime leaseExpiresAt) {
+    public Flux<LearningProfileTaskRecord> claimBatch(int limit, String ownerInstance, OffsetDateTime leaseExpiresAt) {
         return databaseClient.sql("""
-                        UPDATE learning_session_memory_task task
+                        UPDATE learning_profile_task task
                         SET status = :processingStatus,
                             owner_instance = :ownerInstance,
                             lease_expires_at = :leaseExpiresAt,
                             updated_at = NOW()
                         WHERE task.id IN (
                             SELECT id
-                            FROM learning_session_memory_task
+                            FROM learning_profile_task
                             WHERE (
                                     status IN ('PENDING', 'FAILED')
                                     AND available_at <= NOW()
@@ -69,7 +67,7 @@ public class LearningSessionMemoryTaskStore {
                 .bind("ownerInstance", ownerInstance)
                 .bind("leaseExpiresAt", leaseExpiresAt)
                 .bind("limit", limit)
-                .map((row, metadata) -> new SessionMemoryTaskRecord(
+                .map((row, metadata) -> new LearningProfileTaskRecord(
                         row.get("id", Long.class),
                         row.get("conversation_id", String.class),
                         row.get("request_id", String.class),
@@ -84,10 +82,9 @@ public class LearningSessionMemoryTaskStore {
                 .all();
     }
 
-    // 把任务标记为 COMPLETED，并清空占用者信息。
     public Mono<Void> markCompleted(Long taskId) {
         return databaseClient.sql("""
-                        UPDATE learning_session_memory_task
+                        UPDATE learning_profile_task
                         SET status = :status,
                             owner_instance = NULL,
                             lease_expires_at = NULL,
@@ -101,10 +98,9 @@ public class LearningSessionMemoryTaskStore {
                 .then();
     }
 
-    // 把任务标记为 FAILED，并写入下次可重试时间。
     public Mono<Void> markFailed(Long taskId, String lastError, OffsetDateTime availableAt) {
         return databaseClient.sql("""
-                        UPDATE learning_session_memory_task
+                        UPDATE learning_profile_task
                         SET status = :status,
                             owner_instance = NULL,
                             lease_expires_at = NULL,
@@ -123,7 +119,6 @@ public class LearningSessionMemoryTaskStore {
                 .then();
     }
 
-    // 限制任务错误信息长度。
     private String truncate(String value) {
         if (value == null || value.length() <= 1000) {
             return value;
