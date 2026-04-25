@@ -161,7 +161,7 @@ src/main/java/org/example/kbsystemproject
 | 现有位置 | 目标位置 | 说明 |
 |---|---|---|
 | `controller/AIController` | `ailearning/interfaces/http/AiLearningController` | 从测试接口改为正式学习助手接口 |
-| `service/AgentService` | `ailearning/application/service/AiLearningApplicationService` + `infrastructure/ai/orchestration/*` | 拆分聊天编排、会话流管理、Agent 调用 |
+| `service/AgentService` | `ailearning/application/chat/AiLearningApplicationService` + `infrastructure/ai/orchestration/*` | 拆分聊天编排、会话流管理、Agent 调用 |
 | `service/ConversationService` | `ailearning/infrastructure/persistence/session/*` | 作为学习会话状态持久化适配 |
 | `service/ConversationMemoryService` | `ailearning/infrastructure/memory/ConversationArchiveStore` | 长期归档和摘要检索 |
 | `service/MemoryService` | `ailearning/infrastructure/memory/LearningMemoryService` | 学习记忆统一服务 |

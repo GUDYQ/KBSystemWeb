@@ -1,15 +1,15 @@
 package org.example.kbsystemproject.ailearning.evaluation.retrieval;
 
 import lombok.Data;
-import org.example.kbsystemproject.ailearning.application.service.EnhancedQueryPlan;
-import org.example.kbsystemproject.ailearning.application.service.LearningChatCommand;
-import org.example.kbsystemproject.ailearning.application.service.QueryEnhancementService;
+import org.example.kbsystemproject.ailearning.application.chat.LearningChatCommand;
 import org.example.kbsystemproject.ailearning.domain.intent.ExecutionMode;
 import org.example.kbsystemproject.ailearning.domain.intent.IntentDecision;
 import org.example.kbsystemproject.ailearning.domain.intent.IntentSource;
 import org.example.kbsystemproject.ailearning.domain.intent.IntentType;
 import org.example.kbsystemproject.ailearning.domain.session.LearningSessionType;
-import org.example.kbsystemproject.ailearning.retrieval.Bm25SearchService;
+import org.example.kbsystemproject.ailearning.infrastructure.rag.Bm25SearchService;
+import org.example.kbsystemproject.ailearning.infrastructure.rag.EnhancedQueryPlan;
+import org.example.kbsystemproject.ailearning.infrastructure.rag.QueryEnhancementService;
 import org.springframework.ai.document.Document;
 import org.springframework.ai.vectorstore.SearchRequest;
 import org.springframework.ai.vectorstore.VectorStore;
@@ -446,3 +446,4 @@ public class EnhancedRecallEvaluator {
     private record QuerySearchResult(String source, String query, List<Document> documents) {
     }
 }
+

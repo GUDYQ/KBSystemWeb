@@ -35,10 +35,12 @@ public class MemoryProperties {
     public static class Summary {
         private boolean enabled = true;
         private int triggerTurns = 20;
+        private int maxInputTokensEstimate = 6000;
     }
 
     @Data
     public static class Compression {
+        private boolean enabled = true;
         private int recentRawTurns = 6;
         private int shortTermTriggerTurns = 8;
         private int topicBlockMinTurns = 3;

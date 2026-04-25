@@ -2,7 +2,7 @@ package org.example.kbsystemproject.ailearning.evaluation.retrieval;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.example.kbsystemproject.ailearning.document.splitter.RecursiveCharacterTextSplitter;
-import org.example.kbsystemproject.ailearning.retrieval.Bm25SearchService;
+import org.example.kbsystemproject.ailearning.infrastructure.rag.Bm25SearchService;
 import org.springframework.ai.document.Document;
 import org.springframework.ai.vectorstore.VectorStore;
 import org.springframework.beans.factory.annotation.Value;

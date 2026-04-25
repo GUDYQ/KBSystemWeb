@@ -1,6 +1,6 @@
 package org.example.kbsystemproject;
 
-import org.example.kbsystemproject.ailearning.application.service.AiLearningApplicationService;
+import org.example.kbsystemproject.ailearning.application.chat.AiLearningApplicationService;
 import org.junit.jupiter.api.Test;
 import org.springframework.ai.document.Document;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -77,3 +77,4 @@ public class RecallRateTest {
         }
     }
 }
+

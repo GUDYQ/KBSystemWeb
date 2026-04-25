@@ -1,6 +1,6 @@
 package org.example.kbsystemproject.controller;
 
-import org.example.kbsystemproject.ailearning.application.service.AiLearningApplicationService;
+import org.example.kbsystemproject.ailearning.application.chat.AiLearningApplicationService;
 import org.example.kbsystemproject.ailearning.evaluation.retrieval.EnhancedRecallEvaluator;
 import org.example.kbsystemproject.ailearning.evaluation.retrieval.RecallEvaluator;
 import org.example.kbsystemproject.ailearning.evaluation.retrieval.T2RecallTestCaseBuilder;
@@ -91,3 +91,4 @@ public class TestController {
                 .map(ResponseBuilder::success);
     }
 }
+

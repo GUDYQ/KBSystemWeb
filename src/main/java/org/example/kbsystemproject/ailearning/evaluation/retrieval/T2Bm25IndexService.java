@@ -1,7 +1,7 @@
 package org.example.kbsystemproject.ailearning.evaluation.retrieval;
 
 import lombok.extern.slf4j.Slf4j;
-import org.example.kbsystemproject.ailearning.retrieval.Bm25SearchService;
+import org.example.kbsystemproject.ailearning.infrastructure.rag.Bm25SearchService;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 import reactor.core.publisher.Mono;

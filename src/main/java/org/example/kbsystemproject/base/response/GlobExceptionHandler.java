@@ -1,6 +1,6 @@
 package org.example.kbsystemproject.base.response;
 
-import org.example.kbsystemproject.ailearning.application.service.SessionRequestConflictException;
+import org.example.kbsystemproject.ailearning.application.session.SessionRequestConflictException;
 import org.example.kbsystemproject.base.exception.UseException;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
@@ -19,3 +19,4 @@ public class GlobExceptionHandler {
         return Mono.just(ResponseBuilder.error(409, error.getMessage()));
     }
 }
+

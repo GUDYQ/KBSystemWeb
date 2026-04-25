@@ -1,6 +1,6 @@
 /**
  * 应用层。
  *
- * <p>负责学习任务编排，组织会话、RAG、记忆、工具与持久化协作。</p>
+ * <p>负责学习任务编排，当前按 chat、profile、session 三类功能子层组织。</p>
  */
 package org.example.kbsystemproject.ailearning.application;

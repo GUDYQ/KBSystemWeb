@@ -74,6 +74,19 @@ public class LearningSessionStore {
         return repository.updateLastSummarizedTurn(conversationId, lastSummarizedTurn).then();
     }
 
+    // 使用 CAS 推进摘要游标，避免并发归档时重复推进或回退。
+    public Mono<Boolean> advanceLastSummarizedTurn(String conversationId,
+                                                   int expectedLastSummarizedTurn,
+                                                   int nextLastSummarizedTurn) {
+        return repository.advanceLastSummarizedTurn(
+                        conversationId,
+                        expectedLastSummarizedTurn,
+                        nextLastSummarizedTurn
+                )
+                .map(updatedRows -> updatedRows != null && updatedRows > 0)
+                .defaultIfEmpty(false);
+    }
+
     // 构造一条全新的会话主记录；并发创建时用唯一键兜底回查。
     private Mono<LearningSessionEntity> createSession(String conversationId,
                                                       String userId,

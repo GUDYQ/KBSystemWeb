@@ -1,9 +1,9 @@
 package org.example.kbsystemproject.ailearning.interfaces.http;
 
 import jakarta.validation.Valid;
-import org.example.kbsystemproject.ailearning.application.service.AiLearningApplicationService;
-import org.example.kbsystemproject.ailearning.application.service.LearningChatCommand;
-import org.example.kbsystemproject.ailearning.application.service.LearningProfileApplicationService;
+import org.example.kbsystemproject.ailearning.application.chat.AiLearningApplicationService;
+import org.example.kbsystemproject.ailearning.application.chat.LearningChatCommand;
+import org.example.kbsystemproject.ailearning.application.profile.LearningProfileApplicationService;
 import org.example.kbsystemproject.ailearning.interfaces.http.request.ChatRequest;
 import org.example.kbsystemproject.ailearning.interfaces.http.request.LearningProfileUpdateRequest;
 import org.example.kbsystemproject.ailearning.interfaces.http.response.ChatChunkResponse;
@@ -144,3 +144,4 @@ public class AiLearningController {
         return "req_" + UUID.randomUUID().toString().replace("-", "");
     }
 }
+

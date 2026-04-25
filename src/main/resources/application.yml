@@ -109,6 +109,16 @@ memory:
   summary:
     enabled: false
     trigger-turns: 20
+    max-input-tokens-estimate: 6000
+  compression:
+    enabled: false
+    recent-raw-turns: 6
+    short-term-trigger-turns: 8
+    topic-block-min-turns: 3
+    low-info-ratio-threshold: 0.5
+    unresolved-threshold: 2
+    idle-summary-minutes: 30
+    long-term-archive-min-turns: 3
   concurrency:
     enabled: true
     lock-wait-millis: 3000

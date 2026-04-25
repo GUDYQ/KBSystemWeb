@@ -11,6 +11,7 @@ import org.springframework.stereotype.Repository;
 import reactor.core.publisher.Mono;
 
 import java.time.OffsetDateTime;
+import java.util.Locale;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -192,17 +193,17 @@ public class ConversationArchiveStore {
                                       Map<String, Object> sessionMetadata,
                                       Integer turnIndex,
                                       Integer messageIndex) {
+        String summaryKey = resolveSummaryKey(memoryType, sessionMetadata);
         return Mono.fromCallable(() -> objectMapper.writeValueAsString(buildMetadata(turn, sessionMetadata)))
                 .flatMap(metadataJson -> bindNullable(databaseClient.sql("""
                                 INSERT INTO vector_store_conversation (
-                                    content, metadata, conversation_id, memory_type, embedding, created_at, turn_index, message_index
+                                    content, metadata, conversation_id, memory_type, embedding, created_at, turn_index, message_index, summary_key
                                 )
                                 VALUES (
                                     :content, CAST(:metadata AS jsonb), :conversationId, :memoryType,
-                                    CAST(:embedding AS vector), :createdAt, :turnIndex, :messageIndex
+                                    CAST(:embedding AS vector), :createdAt, :turnIndex, :messageIndex, :summaryKey
                                 )
-                                ON CONFLICT (conversation_id, turn_index, message_index)
-                                DO NOTHING
+                                ON CONFLICT DO NOTHING
                                 """)
                                 .bind("content", turn.content())
                                 .bind("metadata", metadataJson)
@@ -214,6 +215,7 @@ public class ConversationArchiveStore {
                         turnIndex,
                         Integer.class))
                 .flatMap(spec -> bindNullable(spec, "messageIndex", messageIndex, Integer.class))
+                .flatMap(spec -> bindNullable(spec, "summaryKey", summaryKey, String.class))
                 .flatMap(spec -> spec.fetch().rowsUpdated().then());
     }
 
@@ -238,6 +240,48 @@ public class ConversationArchiveStore {
             metadata.putAll(sessionMetadata);
         }
         return metadata;
+    }
+
+    private String resolveSummaryKey(String memoryType, Map<String, Object> sessionMetadata) {
+        if (!"SUMMARY".equalsIgnoreCase(memoryType) || sessionMetadata == null || sessionMetadata.isEmpty()) {
+            return null;
+        }
+
+        Object summaryType = sessionMetadata.get("summaryType");
+        String normalizedSummaryType = summaryType == null
+                ? "SUMMARY"
+                : String.valueOf(summaryType).trim().toUpperCase(Locale.ROOT);
+
+        Integer startTurn = toInteger(sessionMetadata.get("summaryStartTurn"));
+        if (startTurn == null) {
+            startTurn = toInteger(sessionMetadata.get("startTurn"));
+        }
+        Integer endTurn = toInteger(sessionMetadata.get("summaryEndTurn"));
+        if (endTurn == null) {
+            endTurn = toInteger(sessionMetadata.get("endTurn"));
+        }
+
+        if (startTurn != null && endTurn != null) {
+            return normalizedSummaryType + ":" + startTurn + "-" + endTurn;
+        }
+        return null;
+    }
+
+    private Integer toInteger(Object value) {
+        if (value instanceof Integer integerValue) {
+            return integerValue;
+        }
+        if (value instanceof Number numberValue) {
+            return numberValue.intValue();
+        }
+        if (value instanceof String stringValue && !stringValue.isBlank()) {
+            try {
+                return Integer.parseInt(stringValue.trim());
+            } catch (NumberFormatException ignored) {
+                return null;
+            }
+        }
+        return null;
     }
 
     // 解析向量表里存储的 JSON 元数据。

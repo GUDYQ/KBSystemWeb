@@ -103,4 +103,18 @@ public interface LearningSessionRepository extends ReactiveCrudRepository<Learni
             WHERE conversation_id = :conversationId
             """)
     Mono<Integer> updateLastSummarizedTurn(String conversationId, Integer lastSummarizedTurn);
+
+    // 只有当前游标仍等于 expectedLastSummarizedTurn 时，才推进到 nextLastSummarizedTurn。
+    @Modifying
+    @Query("""
+            UPDATE learning_session
+            SET last_summarized_turn = :nextLastSummarizedTurn,
+                updated_at = NOW(),
+                last_active_at = NOW()
+            WHERE conversation_id = :conversationId
+              AND last_summarized_turn = :expectedLastSummarizedTurn
+            """)
+    Mono<Integer> advanceLastSummarizedTurn(String conversationId,
+                                            Integer expectedLastSummarizedTurn,
+                                            Integer nextLastSummarizedTurn);
 }
