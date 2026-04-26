@@ -2,6 +2,7 @@ package org.example.kbsystemproject.service;
 
 import org.example.kbsystemproject.utils.RedisUtils;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.data.redis.core.ReactiveRedisTemplate;
 import org.springframework.data.redis.core.script.RedisScript;
 import org.springframework.stereotype.Service;
@@ -13,6 +14,7 @@ import java.util.List;
 public class RateLimitService {
 
     @Autowired
+    @Qualifier("reactiveRedisTemplate")
     private ReactiveRedisTemplate<String, String> reactiveRedisTemplate;
 
     public Mono<Boolean> preDeductTokens(String userId, int estimatedTokens) {

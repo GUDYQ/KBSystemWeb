@@ -1,18 +1,8 @@
 {
   "mcpServers": {
-    "PaddleOCR-VL": {
+    "fetch": {
       "command": "uvx",
-      "args": [
-        "--from",
-        "paddleocr-mcp",
-        "paddleocr_mcp"
-      ],
-      "env": {
-        "PADDLEOCR_MCP_PIPELINE": "PaddleOCR-VL",
-        "PADDLEOCR_MCP_PPOCR_SOURCE": "aistudio",
-        "PADDLEOCR_MCP_SERVER_URL": "https://573fy1n965ubh9l9.aistudio-app.com",
-        "PADDLEOCR_MCP_AISTUDIO_ACCESS_TOKEN": "aa461bac108fe0a97b45084ae8a0c45ff8f808a8"
-      }
+      "args": ["mcp-server-fetch"]
     }
   }
 }

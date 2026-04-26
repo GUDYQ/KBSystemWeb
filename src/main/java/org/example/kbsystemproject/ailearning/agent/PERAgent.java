@@ -94,7 +94,7 @@ public class PERAgent extends AbstractChatAgent {
         log.info("PERAgent is entering phase: {}", phase);
 
         if (phase == Phase.FINISHED) {
-            return Flux.just(AgentSignal.event(new AgentEvent(AgentState.TERMINAL, "任务已完成")));
+            return Flux.just(AgentSignal.event(new AgentEvent(AgentState.TERMINAL, "任务已完成", Map.of())));
         }
 
         // 根据不同阶段，给模型注入对应的强制 prompt 指导
@@ -120,7 +120,7 @@ public class PERAgent extends AbstractChatAgent {
                         nextContext = updateBusinessContext(nextContext, STEP_INDEX_KEY, 0);
                     }
                     return Flux.just(
-                            AgentSignal.event(new AgentEvent(AgentState.ITERATION_COMPLETE, "Plan completed.")),
+                            AgentSignal.event(new AgentEvent(AgentState.ITERATION_COMPLETE, "Plan completed.", Map.of())),
                             AgentSignal.next(nextContext)
                     );
                 }
@@ -145,7 +145,7 @@ public class PERAgent extends AbstractChatAgent {
                                     // 执行完毕后进入 REFLECT 阶段反思
                                     nextContext = setPhase(nextContext, Phase.REFLECT);
                                     return Flux.just(
-                                            AgentSignal.event(new AgentEvent(AgentState.TOOL_RESULT, "Executed tool, moving to REFLECT")),
+                                            AgentSignal.event(new AgentEvent(AgentState.TOOL_RESULT, "Executed tool, moving to REFLECT", Map.of())),
                                             AgentSignal.next(nextContext.nextStep())
                                     );
                                 });
@@ -171,7 +171,7 @@ public class PERAgent extends AbstractChatAgent {
 
                         if (nextPhase == Phase.FINISHED) {
                             return Flux.just(
-                                    AgentSignal.event(new AgentEvent(AgentState.FINISHED, message.getText())),
+                                    AgentSignal.event(new AgentEvent(AgentState.FINISHED, message.getText(), Map.of())),
                                     AgentSignal.next(nextContext)
                             );
                         } else {
@@ -194,7 +194,7 @@ public class PERAgent extends AbstractChatAgent {
                     return Flux.just(AgentSignal.next(nextContext));
                 }
                 default -> {
-                    return Flux.just(AgentSignal.event(new AgentEvent(AgentState.TERMINAL, "Unknown Phase")));
+                    return Flux.just(AgentSignal.event(new AgentEvent(AgentState.TERMINAL, "Unknown Phase", Map.of())));
                 }
             }
         } catch (Exception e) {

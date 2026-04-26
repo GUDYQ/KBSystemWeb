@@ -10,6 +10,7 @@ import org.example.kbsystemproject.ailearning.domain.session.SessionMemorySnapsh
 import org.example.kbsystemproject.ailearning.domain.session.SessionMessageRole;
 import org.example.kbsystemproject.ailearning.domain.session.SessionRequestDecision;
 import org.example.kbsystemproject.ailearning.domain.session.SessionTurnPair;
+import org.example.kbsystemproject.ailearning.domain.session.ToolExecutionTrace;
 import org.example.kbsystemproject.ailearning.application.profile.ProfileContextService;
 import org.example.kbsystemproject.ailearning.application.session.AsyncTurnPersistenceService;
 import org.example.kbsystemproject.ailearning.application.session.SessionRequestConflictException;
@@ -36,6 +37,7 @@ import reactor.util.context.Context;
 import java.time.Duration;
 import java.time.OffsetDateTime;
 import java.util.List;
+import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.concurrent.CancellationException;
 import java.util.concurrent.TimeUnit;
@@ -263,7 +265,8 @@ public class AiLearningApplicationService {
                                 snapshot,
                                 decision,
                                 retrievedDocs,
-                                requestMonitor
+                                requestMonitor,
+                                List.of()
                         ))
                         .doOnSuccess(ignored -> persisted.set(true)))
                 .doFinally(signalType -> releaseIfCanceled(command, persisted, signalType));
@@ -283,8 +286,7 @@ public class AiLearningApplicationService {
                 OffsetDateTime.now(),
                 learningPromptService.buildUserTurnMetadata(command, decision)
         );
-        AtomicReference<String> finalAssistantContent = new AtomicReference<>("");
-        StringBuilder tokenAssistantContent = new StringBuilder();
+        AgentTurnCapture capture = new AgentTurnCapture();
         AtomicBoolean persisted = new AtomicBoolean(false);
 
         Flux<String> generatedStream = learningPipelineMonitor.monitorVisibleStreamStage(
@@ -297,10 +299,10 @@ public class AiLearningApplicationService {
                         command.prompt(),
                         learningPromptService.buildAgentBusinessContext(command, snapshot, decision, retrievedDocs, profileContext)
                 )
-                .doOnNext(event -> collectAssistantContent(event.state(), event.content(), finalAssistantContent, tokenAssistantContent))
                 .doOnNext(event -> log.info("Agent Event: {}", event))
+                .doOnNext(capture::accept)
                 .flatMap(event -> {
-                    String content = toUserVisibleAgentContent(event, !tokenAssistantContent.isEmpty());
+                    String content = toUserVisibleAgentContent(event, capture.hasTokenContent());
                     if (content != null && !content.isBlank()) {
                         return Mono.just(content);
                     }
@@ -311,11 +313,12 @@ public class AiLearningApplicationService {
         Flux<String> agentStream = generatedStream.concatWith(Mono.defer(() -> persistTurn(
                                 command,
                                 userTurn,
-                                resolveAssistantContent(finalAssistantContent.get(), tokenAssistantContent.toString()),
+                                capture.resolveAssistantContent(),
                                 snapshot,
                                 decision,
                                 retrievedDocs,
-                                requestMonitor
+                                requestMonitor,
+                                capture.toolTraces()
                         ))
                         .doOnSuccess(ignored -> persisted.set(true)))
                 .doFinally(signalType -> releaseIfCanceled(command, persisted, signalType));
@@ -436,7 +439,8 @@ public class AiLearningApplicationService {
                                      SessionMemorySnapshot snapshot,
                                      IntentDecision decision,
                                      List<Document> retrievedDocs,
-                                     LearningPipelineMonitor.RequestStageMonitor requestMonitor) {
+                                     LearningPipelineMonitor.RequestStageMonitor requestMonitor,
+                                     List<ToolExecutionTrace> toolTraces) {
         String normalizedAssistantContent = assistantContent == null ? "" : assistantContent.trim();
         if (normalizedAssistantContent.isEmpty()) {
             return Mono.error(new IllegalStateException("Assistant content is empty"));
@@ -446,7 +450,23 @@ public class AiLearningApplicationService {
                 SessionMessageRole.ASSISTANT,
                 normalizedAssistantContent,
                 OffsetDateTime.now(),
-                learningPromptService.buildAssistantTurnMetadata(command, decision)
+                learningPromptService.buildAssistantTurnMetadata(command, decision, toolTraces)
+        );
+        Mono<Void> enqueueTask = (toolTraces == null || toolTraces.isEmpty())
+                ? asyncTurnPersistenceService.enqueue(
+                command.conversationId(),
+                command.requestId(),
+                new SessionTurnPair(userTurn, assistantTurn),
+                command.currentTopic(),
+                learningPromptService.buildSessionMetadata(command, snapshot, decision, retrievedDocs, List.of())
+        )
+                : asyncTurnPersistenceService.enqueue(
+                command.conversationId(),
+                command.requestId(),
+                new SessionTurnPair(userTurn, assistantTurn),
+                command.currentTopic(),
+                learningPromptService.buildSessionMetadata(command, snapshot, decision, retrievedDocs, toolTraces),
+                toolTraces
         );
 
         return learningPipelineMonitor.monitorStageMono(
@@ -454,30 +474,9 @@ public class AiLearningApplicationService {
                         command,
                         decision,
                         requestMonitor,
-                        asyncTurnPersistenceService.enqueue(
-                                command.conversationId(),
-                                command.requestId(),
-                                new SessionTurnPair(userTurn, assistantTurn),
-                                command.currentTopic(),
-                                learningPromptService.buildSessionMetadata(command, snapshot, decision, retrievedDocs)
-                        )
+                        enqueueTask
                 )
                 .then(Mono.empty());
-    }
-
-    private void collectAssistantContent(AgentState state,
-                                         String content,
-                                         AtomicReference<String> finalAssistantContent,
-                                         StringBuilder tokenAssistantContent) {
-        if (content == null || content.isBlank()) {
-            return;
-        }
-        switch (state) {
-            case FINISHED -> finalAssistantContent.set(content);
-            case TOKEN -> tokenAssistantContent.append(content);
-            default -> {
-            }
-        }
     }
 
     private String toUserVisibleAgentContent(AgentEvent event, boolean tokenAlreadyProduced) {
@@ -506,6 +505,69 @@ public class AiLearningApplicationService {
                 CONTEXT_REQUEST_ID, command.requestId(),
                 CONTEXT_EXECUTION_MODE, "pending"
         );
+    }
+
+    private final class AgentTurnCapture {
+        private final AtomicReference<String> finalAssistantContent = new AtomicReference<>("");
+        private final StringBuilder tokenAssistantContent = new StringBuilder();
+        private final Map<String, ToolExecutionTrace> toolTraceIndex = new LinkedHashMap<>();
+
+        private void accept(AgentEvent event) {
+            if (event == null) {
+                return;
+            }
+            String content = event.content();
+            if (content != null && !content.isBlank()) {
+                switch (event.state()) {
+                    case FINISHED -> finalAssistantContent.set(content);
+                    case TOKEN -> tokenAssistantContent.append(content);
+                    default -> {
+                    }
+                }
+            }
+            if (event.state() != AgentState.TOOL_START && event.state() != AgentState.TOOL_RESULT) {
+                return;
+            }
+            ToolExecutionTrace trace = ToolExecutionTrace.fromAgentEvent(event);
+            if (trace == null || trace.toolCallId() == null || trace.toolCallId().isBlank()) {
+                return;
+            }
+            ToolExecutionTrace existing = toolTraceIndex.get(trace.toolCallId());
+            if (existing == null || shouldReplace(existing, trace)) {
+                toolTraceIndex.put(trace.toolCallId(), trace);
+            }
+        }
+
+        private boolean hasTokenContent() {
+            return !tokenAssistantContent.isEmpty();
+        }
+
+        private String resolveAssistantContent() {
+            return AiLearningApplicationService.this.resolveAssistantContent(
+                    finalAssistantContent.get(),
+                    tokenAssistantContent.toString()
+            );
+        }
+
+        private List<ToolExecutionTrace> toolTraces() {
+            return List.copyOf(toolTraceIndex.values());
+        }
+
+        private boolean shouldReplace(ToolExecutionTrace existing, ToolExecutionTrace candidate) {
+            if (existing.status() == null) {
+                return true;
+            }
+            if (candidate.status() == null) {
+                return false;
+            }
+            if (existing.status() == candidate.status()) {
+                return candidate.finishedAt() != null;
+            }
+            return switch (existing.status()) {
+                case STARTED -> true;
+                case SUCCEEDED, FAILED, SKIPPED -> false;
+            };
+        }
     }
 }
 

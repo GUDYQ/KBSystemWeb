@@ -2,15 +2,18 @@ package org.example.kbsystemproject.ailearning.application.session;
 
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import org.example.kbsystemproject.ailearning.domain.session.ToolExecutionTrace;
 import lombok.extern.slf4j.Slf4j;
 import org.example.kbsystemproject.ailearning.domain.session.SessionTurnPair;
 import org.example.kbsystemproject.config.MemoryProperties;
+import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.data.redis.core.ReactiveRedisTemplate;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Service;
 import reactor.core.publisher.Flux;
 import reactor.core.publisher.Mono;
 
+import java.util.List;
 import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.concurrent.atomic.AtomicBoolean;
@@ -28,7 +31,7 @@ public class AsyncTurnPersistenceService {
     private final MemoryProperties memoryProperties;
     private final AtomicBoolean running = new AtomicBoolean(false);
 
-    public AsyncTurnPersistenceService(ReactiveRedisTemplate<String, String> redisTemplate,
+    public AsyncTurnPersistenceService(@Qualifier("reactiveRedisTemplate") ReactiveRedisTemplate<String, String> redisTemplate,
                                        ObjectMapper objectMapper,
                                        SessionStorageService sessionStorageService,
                                        SessionRequestService sessionRequestService,
@@ -45,12 +48,22 @@ public class AsyncTurnPersistenceService {
                               SessionTurnPair turnPair,
                               String currentTopic,
                               Map<String, Object> sessionMetadata) {
+        return enqueue(conversationId, requestId, turnPair, currentTopic, sessionMetadata, List.of());
+    }
+
+    public Mono<Void> enqueue(String conversationId,
+                              String requestId,
+                              SessionTurnPair turnPair,
+                              String currentTopic,
+                              Map<String, Object> sessionMetadata,
+                              List<ToolExecutionTrace> toolTraces) {
         QueuedTurnPersistence command = new QueuedTurnPersistence(
                 conversationId,
                 requestId,
                 currentTopic,
                 turnPair,
-                sessionMetadata == null ? Map.of() : new LinkedHashMap<>(sessionMetadata)
+                sessionMetadata == null ? Map.of() : new LinkedHashMap<>(sessionMetadata),
+                toolTraces == null ? List.of() : List.copyOf(toolTraces)
         );
         return Mono.fromCallable(() -> objectMapper.writeValueAsString(command))
                 .flatMap(payload -> redisTemplate.opsForList().rightPush(TURN_PERSIST_QUEUE_KEY, payload))
@@ -86,7 +99,8 @@ public class AsyncTurnPersistenceService {
                                 command.requestId(),
                                 command.turnPair(),
                                 command.currentTopic(),
-                                command.sessionMetadata()
+                                command.sessionMetadata(),
+                                command.toolTraces()
                         )
                         .onErrorResume(error -> sessionRequestService.markFailed(
                                         command.conversationId(),
@@ -108,6 +122,7 @@ public class AsyncTurnPersistenceService {
                                          String requestId,
                                          String currentTopic,
                                          SessionTurnPair turnPair,
-                                         Map<String, Object> sessionMetadata) {
+                                         Map<String, Object> sessionMetadata,
+                                         List<ToolExecutionTrace> toolTraces) {
     }
 }

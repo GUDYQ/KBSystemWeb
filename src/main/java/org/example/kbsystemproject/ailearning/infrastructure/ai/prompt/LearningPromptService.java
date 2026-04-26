@@ -9,6 +9,9 @@ import org.example.kbsystemproject.ailearning.domain.session.LongTermMemoryEntry
 import org.example.kbsystemproject.ailearning.domain.session.SessionMemorySnapshot;
 import org.example.kbsystemproject.ailearning.domain.session.SessionMessageRole;
 import org.example.kbsystemproject.ailearning.domain.session.SessionTopicBlock;
+import org.example.kbsystemproject.ailearning.domain.session.ToolExecutionTrace;
+import org.example.kbsystemproject.ailearning.domain.session.ToolExecutionStatus;
+import org.example.kbsystemproject.ailearning.domain.session.ToolMemoryEntry;
 import org.springframework.ai.chat.messages.AssistantMessage;
 import org.springframework.ai.chat.messages.Message;
 import org.springframework.ai.chat.messages.SystemMessage;
@@ -79,6 +82,9 @@ public class LearningPromptService {
         context.put("retrievedKnowledge", retrievedDocs.stream()
                 .map(this::formatDocumentForContext)
                 .toList());
+        context.put("recentToolMemories", snapshot.recentToolMemories().stream()
+                .map(this::formatToolMemoryEntry)
+                .toList());
         context.put("learningProfileGoal", profileContext.learningGoal());
         context.put("learningProfileStyle", profileContext.preferredStyle());
         context.put("sessionFocusTopic", profileContext.currentTopic());
@@ -98,17 +104,21 @@ public class LearningPromptService {
         return metadata;
     }
 
-    public Map<String, Object> buildAssistantTurnMetadata(LearningChatCommand command, IntentDecision decision) {
+    public Map<String, Object> buildAssistantTurnMetadata(LearningChatCommand command,
+                                                          IntentDecision decision,
+                                                          List<ToolExecutionTrace> toolTraces) {
         Map<String, Object> metadata = new LinkedHashMap<>();
         metadata.put("requestId", command.requestId());
         metadata.putAll(decision.toMetadata());
+        appendToolTraceMetadata(metadata, toolTraces);
         return metadata;
     }
 
     public Map<String, Object> buildSessionMetadata(LearningChatCommand command,
                                                     SessionMemorySnapshot snapshot,
                                                     IntentDecision decision,
-                                                    List<Document> retrievedDocs) {
+                                                    List<Document> retrievedDocs,
+                                                    List<ToolExecutionTrace> toolTraces) {
         Map<String, Object> metadata = new LinkedHashMap<>();
         metadata.put("requestId", command.requestId());
         metadata.put("subject", defaultText(command.subject()));
@@ -124,6 +134,7 @@ public class LearningPromptService {
                     .toList());
         }
         metadata.putAll(decision.toMetadata());
+        appendToolTraceMetadata(metadata, toolTraces);
         return metadata;
     }
 
@@ -162,6 +173,8 @@ public class LearningPromptService {
         builder.append(formatActiveTopicBlock(snapshot.activeTopicBlock()));
         builder.append("\n长期记忆:\n");
         builder.append(formatLongTermMemory(snapshot.longTermMemory()));
+        builder.append("\n最近工具记忆:\n");
+        builder.append(formatRecentToolMemories(snapshot.recentToolMemories()));
         builder.append("\n检索资料:\n");
         builder.append(formatRetrievedKnowledge(retrievedDocs, decision.needRetrieval()));
         return builder.toString();
@@ -234,6 +247,19 @@ public class LearningPromptService {
         return builder.toString();
     }
 
+    private String formatRecentToolMemories(List<ToolMemoryEntry> toolMemories) {
+        if (toolMemories == null || toolMemories.isEmpty()) {
+            return "无\n";
+        }
+        StringBuilder builder = new StringBuilder();
+        for (ToolMemoryEntry entry : toolMemories) {
+            builder.append("- ")
+                    .append(formatToolMemoryEntry(entry))
+                    .append('\n');
+        }
+        return builder.toString();
+    }
+
     private String formatRetrievedKnowledge(List<Document> retrievedDocs, boolean retrievalRequested) {
         if (retrievedDocs == null || retrievedDocs.isEmpty()) {
             return retrievalRequested
@@ -294,6 +320,50 @@ public class LearningPromptService {
 
     private String defaultText(String value) {
         return value == null || value.isBlank() ? "未提供" : value;
+    }
+
+    private void appendToolTraceMetadata(Map<String, Object> metadata, List<ToolExecutionTrace> toolTraces) {
+        List<String> summaries = summarizeToolTraces(toolTraces);
+        if (summaries.isEmpty()) {
+            return;
+        }
+        metadata.put("toolTraceCount", toolTraces.size());
+        metadata.put("toolMemorySummary", summaries);
+    }
+
+    private List<String> summarizeToolTraces(List<ToolExecutionTrace> toolTraces) {
+        if (toolTraces == null || toolTraces.isEmpty()) {
+            return List.of();
+        }
+        return toolTraces.stream()
+                .filter(trace -> trace != null)
+                .filter(trace -> trace.status() != ToolExecutionStatus.STARTED)
+                .map(trace -> {
+                    if (trace.resultSummary() != null && !trace.resultSummary().isBlank()) {
+                        return trace.resultSummary();
+                    }
+                    if (trace.errorMessage() != null && !trace.errorMessage().isBlank()) {
+                        return trace.toolName() + " failed: " + trace.errorMessage();
+                    }
+                    return trace.toolName();
+                })
+                .filter(summary -> summary != null && !summary.isBlank())
+                .toList();
+    }
+
+    private String formatToolMemoryEntry(ToolMemoryEntry entry) {
+        StringBuilder builder = new StringBuilder();
+        if (entry.turnIndex() != null) {
+            builder.append("第").append(entry.turnIndex()).append("轮 ");
+        }
+        builder.append(defaultText(entry.toolName()));
+        if (entry.status() != null) {
+            builder.append(" [").append(entry.status().name()).append(']');
+        }
+        if (entry.summary() != null && !entry.summary().isBlank()) {
+            builder.append(": ").append(entry.summary());
+        }
+        return builder.toString();
     }
 }
 

@@ -6,6 +6,8 @@ import org.example.kbsystemproject.ailearning.domain.session.LearningSessionReco
 import org.example.kbsystemproject.ailearning.domain.session.LongTermMemoryEntry;
 import org.example.kbsystemproject.ailearning.domain.session.SessionMemorySnapshot;
 import org.example.kbsystemproject.ailearning.domain.session.SessionTopicBlock;
+import org.example.kbsystemproject.ailearning.domain.session.ToolExecutionTrace;
+import org.example.kbsystemproject.ailearning.domain.session.ToolMemoryEntry;
 import org.example.kbsystemproject.ailearning.domain.session.SessionTurnPair;
 import org.example.kbsystemproject.ailearning.infrastructure.memory.ConversationArchiveStore;
 import org.example.kbsystemproject.ailearning.infrastructure.memory.RedisShortTermMemoryStore;
@@ -14,6 +16,7 @@ import org.example.kbsystemproject.ailearning.infrastructure.persistence.session
 import org.example.kbsystemproject.ailearning.infrastructure.persistence.session.LearningSessionMessageStore;
 import org.example.kbsystemproject.ailearning.infrastructure.persistence.session.LearningSessionRequestStore;
 import org.example.kbsystemproject.ailearning.infrastructure.persistence.session.LearningSessionStore;
+import org.example.kbsystemproject.ailearning.infrastructure.persistence.session.LearningSessionToolTraceStore;
 import org.example.kbsystemproject.ailearning.infrastructure.persistence.session.LearningSessionTopicBlockStore;
 import org.example.kbsystemproject.config.MemoryProperties;
 import org.springframework.ai.chat.client.ChatClient;
@@ -40,6 +43,7 @@ public class SessionStorageService {
     private final LearningSessionMemoryTaskStore learningSessionMemoryTaskStore;
     private final LearningProfileTaskStore learningProfileTaskStore;
     private final LearningSessionTopicBlockStore learningSessionTopicBlockStore;
+    private final LearningSessionToolTraceStore learningSessionToolTraceStore;
     private final RedisShortTermMemoryStore shortTermMemoryStore;
     private final ConversationArchiveStore conversationArchiveStore;
     private final EmbeddingModel embeddingModel;
@@ -55,6 +59,7 @@ public class SessionStorageService {
                                  LearningSessionMemoryTaskStore learningSessionMemoryTaskStore,
                                  LearningProfileTaskStore learningProfileTaskStore,
                                  LearningSessionTopicBlockStore learningSessionTopicBlockStore,
+                                 LearningSessionToolTraceStore learningSessionToolTraceStore,
                                  RedisShortTermMemoryStore shortTermMemoryStore,
                                  ConversationArchiveStore conversationArchiveStore,
                                  EmbeddingModel embeddingModel,
@@ -69,6 +74,7 @@ public class SessionStorageService {
         this.learningSessionMemoryTaskStore = learningSessionMemoryTaskStore;
         this.learningProfileTaskStore = learningProfileTaskStore;
         this.learningSessionTopicBlockStore = learningSessionTopicBlockStore;
+        this.learningSessionToolTraceStore = learningSessionToolTraceStore;
         this.shortTermMemoryStore = shortTermMemoryStore;
         this.conversationArchiveStore = conversationArchiveStore;
         this.embeddingModel = embeddingModel;
@@ -97,7 +103,19 @@ public class SessionStorageService {
                                  SessionTurnPair turnPair,
                                  String currentTopic,
                                  Map<String, Object> sessionMetadata) {
-        return sessionLockService.execute(conversationId, () -> appendTurnInternal(conversationId, requestId, turnPair, currentTopic, sessionMetadata));
+        return appendTurn(conversationId, requestId, turnPair, currentTopic, sessionMetadata, List.of());
+    }
+
+    public Mono<Void> appendTurn(String conversationId,
+                                 String requestId,
+                                 SessionTurnPair turnPair,
+                                 String currentTopic,
+                                 Map<String, Object> sessionMetadata,
+                                 List<ToolExecutionTrace> toolTraces) {
+        return sessionLockService.execute(
+                conversationId,
+                () -> appendTurnInternal(conversationId, requestId, turnPair, currentTopic, sessionMetadata, toolTraces)
+        );
     }
 
     public Mono<Void> archiveSummary(String conversationId, String summary, Map<String, Object> metadata) {
@@ -146,9 +164,12 @@ public class SessionStorageService {
                 ? learningSessionTopicBlockStore.findActiveByConversationId(conversationId)
                 .defaultIfEmpty(new SessionTopicBlock(null, conversationId, null, "EMPTY", 0, 0, 0, 0, 0, 0, null, null))
                 : Mono.just(new SessionTopicBlock(null, conversationId, null, "EMPTY", 0, 0, 0, 0, 0, 0, null, null));
+        Mono<List<ToolMemoryEntry>> toolMemoryMono = learningSessionToolTraceStore
+                .loadRecentToolMemories(conversationId, 4)
+                .defaultIfEmpty(List.of());
 
-        return Mono.zip(sessionMono, shortTermMono, longTermMono, activeTopicBlockMono)
-                .map(tuple -> new SessionMemorySnapshot(tuple.getT1(), tuple.getT2(), tuple.getT3(), tuple.getT4()));
+        return Mono.zip(sessionMono, shortTermMono, longTermMono, activeTopicBlockMono, toolMemoryMono)
+                .map(tuple -> new SessionMemorySnapshot(tuple.getT1(), tuple.getT2(), tuple.getT3(), tuple.getT4(), tuple.getT5()));
     }
 
     // 以 learning_session.turn_count 作为权威轮次来源。
@@ -178,12 +199,19 @@ public class SessionStorageService {
                                           String requestId,
                                           SessionTurnPair turnPair,
                                           String currentTopic,
-                                          Map<String, Object> sessionMetadata) {
+                                          Map<String, Object> sessionMetadata,
+                                          List<ToolExecutionTrace> toolTraces) {
         return transactionalOperator.transactional(
                         learningSessionStore.reserveNextTurn(conversationId, currentTopic)
                                 .flatMap(turnIndex -> {
                                     SessionTurnPair indexedTurnPair = indexTurnPair(turnPair, turnIndex);
                                     return learningSessionMessageStore.saveTurnPair(conversationId, requestId, indexedTurnPair, turnIndex)
+                                            .then(learningSessionToolTraceStore.saveTraces(
+                                                    conversationId,
+                                                    requestId,
+                                                    turnIndex,
+                                                    toolTraces == null ? List.of() : toolTraces
+                                            ))
                                             .then(learningSessionMemoryTaskStore.enqueueTurnSync(conversationId, requestId, turnIndex))
                                             .then(learningProfileTaskStore.enqueueTurnSync(conversationId, requestId, turnIndex))
                                             .then(learningSessionRequestStore.markSucceeded(

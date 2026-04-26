@@ -5,15 +5,21 @@ import org.example.kbsystemproject.ailearning.interfaces.adapter.ReactiveToolAda
 import org.example.kbsystemproject.ailearning.tool.FinishTool;
 import org.springframework.ai.chat.client.ChatClient;
 import org.springframework.ai.chat.model.ChatModel;
+import org.springframework.ai.mcp.AsyncMcpToolCallback;
 import org.springframework.ai.openai.OpenAiChatOptions;
 import org.springframework.ai.tool.ToolCallback;
+import org.springframework.ai.tool.ToolCallbackProvider;
 import org.springframework.beans.factory.annotation.Qualifier;
+import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.context.annotation.Primary;
 import reactor.core.scheduler.Scheduler;
 
+import java.util.Arrays;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.function.Function;
 
 @Configuration
@@ -54,11 +60,14 @@ public class ModelConfig {
     }
 
     @Bean
-    public ChatClient agentChatClient(ChatModel chatModel) {
+    public ChatClient agentChatClient(ChatModel chatModel,
+                                      ObjectProvider<ToolCallbackProvider> toolCallbackProviders) {
         OpenAiChatOptions chatOptions = OpenAiChatOptions.builder()
                 .internalToolExecutionEnabled(Boolean.FALSE)
                 .build();
         ToolCallback finishToolCallback = new ReactiveToolAdapter(finishTool);
+        List<ToolCallback> asyncMcpCallbacks = resolveAsyncMcpToolCallbacks(toolCallbackProviders);
+        List<ToolCallback> agentCallbacks = mergeToolCallbacks(finishToolCallback, asyncMcpCallbacks);
         return ChatClient.builder(chatModel)
                 .defaultOptions(chatOptions)
                 .defaultSystem("""
@@ -67,16 +76,35 @@ public class ModelConfig {
                         只有在确实需要结束任务时才调用 FinishTaskTool。
                         如果已经可以直接回答，就直接给出答案，不要额外调用非必要工具。
                         """)
-                .defaultToolCallbacks(List.of(finishToolCallback))
+                .defaultToolCallbacks(agentCallbacks)
                 .build();
     }
 
     @Bean
     public ReActAgent reActAgent(@Qualifier("agentChatClient") ChatClient chatClient,
-                                 @Qualifier("agentScheduler") Scheduler agentScheduler) {
+                                 @Qualifier("agentScheduler") Scheduler agentScheduler,
+                                 ObjectProvider<ToolCallbackProvider> toolCallbackProviders) {
+        List<ToolCallback> asyncMcpCallbacks = resolveAsyncMcpToolCallbacks(toolCallbackProviders);
         return new ReActAgent(chatClient,
                 List.of(finishTool),
+                asyncMcpCallbacks,
                 3,
                 agentScheduler);
+    }
+
+    private List<ToolCallback> resolveAsyncMcpToolCallbacks(ObjectProvider<ToolCallbackProvider> toolCallbackProviders) {
+        return toolCallbackProviders.orderedStream()
+                .flatMap(provider -> Arrays.stream(provider.getToolCallbacks()))
+                .filter(AsyncMcpToolCallback.class::isInstance)
+                .toList();
+    }
+
+    private List<ToolCallback> mergeToolCallbacks(ToolCallback primaryCallback, List<ToolCallback> extraCallbacks) {
+        Map<String, ToolCallback> callbacks = new LinkedHashMap<>();
+        callbacks.put(primaryCallback.getToolDefinition().name(), primaryCallback);
+        if (extraCallbacks != null) {
+            extraCallbacks.forEach(callback -> callbacks.putIfAbsent(callback.getToolDefinition().name(), callback));
+        }
+        return List.copyOf(callbacks.values());
     }
 }
