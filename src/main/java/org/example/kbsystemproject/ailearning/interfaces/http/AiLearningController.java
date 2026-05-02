@@ -126,6 +126,7 @@ public class AiLearningController {
                 request.sessionType(),
                 request.learningGoal(),
                 request.currentTopic(),
+                request.conversationMode(),
                 request.prompt()
         );
     }

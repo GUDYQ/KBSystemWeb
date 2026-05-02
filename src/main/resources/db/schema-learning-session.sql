@@ -6,6 +6,7 @@ CREATE TABLE IF NOT EXISTS learning_session (
     session_type VARCHAR(32) NOT NULL,
     learning_goal TEXT,
     current_topic TEXT,
+    conversation_mode VARCHAR(32) NOT NULL DEFAULT 'MEMORY_ENABLED',
     turn_count INTEGER NOT NULL DEFAULT 0,
     last_summarized_turn INTEGER NOT NULL DEFAULT 0,
     processing_request_id VARCHAR(128),
@@ -24,6 +25,9 @@ ADD COLUMN IF NOT EXISTS processing_request_id VARCHAR(128);
 
 ALTER TABLE learning_session
 ADD COLUMN IF NOT EXISTS processing_lease_expires_at TIMESTAMPTZ;
+
+ALTER TABLE learning_session
+ADD COLUMN IF NOT EXISTS conversation_mode VARCHAR(32) NOT NULL DEFAULT 'MEMORY_ENABLED';
 
 CREATE INDEX IF NOT EXISTS idx_learning_session_user_id
 ON learning_session(user_id);

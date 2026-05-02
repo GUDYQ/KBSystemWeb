@@ -20,7 +20,8 @@ public class R2dbcSchemaConfig {
                 new ResourceDatabasePopulator(new ClassPathResource("db/schema-learning-session-runtime.sql")),
                 new ResourceDatabasePopulator(new ClassPathResource("db/schema-conversation-archive.sql")),
                 new ResourceDatabasePopulator(new ClassPathResource("db/schema-learning-profile.sql")),
-                new ResourceDatabasePopulator(new ClassPathResource("db/schema-learning-compression.sql"))
+                new ResourceDatabasePopulator(new ClassPathResource("db/schema-learning-compression.sql")),
+                new ResourceDatabasePopulator(new ClassPathResource("db/schema-learning-memory.sql"))
         ));
         return initializer;
     }

@@ -1,5 +1,6 @@
 package org.example.kbsystemproject.ailearning.infrastructure.persistence.session;
 
+import org.example.kbsystemproject.ailearning.domain.session.ConversationMode;
 import org.example.kbsystemproject.ailearning.domain.session.LearningSessionRecord;
 import org.example.kbsystemproject.ailearning.domain.session.LearningSessionStatus;
 import org.example.kbsystemproject.ailearning.domain.session.LearningSessionType;
@@ -24,10 +25,20 @@ public class LearningSessionStore {
                                                    String subject,
                                                    LearningSessionType sessionType,
                                                    String learningGoal,
-                                                   String currentTopic) {
+                                                   String currentTopic,
+                                                   ConversationMode conversationMode) {
         return repository.findFirstByConversationId(conversationId)
-                .switchIfEmpty(createSession(conversationId, userId, subject, sessionType, learningGoal, currentTopic))
-                .flatMap(entity -> refreshSession(entity, userId, subject, sessionType, learningGoal, currentTopic))
+                .switchIfEmpty(Mono.defer(() -> createSession(
+                        conversationId,
+                        userId,
+                        subject,
+                        sessionType,
+                        learningGoal,
+                        currentTopic,
+                        conversationMode
+                )))
+                .flatMap(entity -> validateSessionOwner(entity, userId)
+                        .then(Mono.defer(() -> refreshSession(entity, userId, subject, sessionType, learningGoal, currentTopic, conversationMode))))
                 .map(this::toRecord);
     }
 
@@ -93,7 +104,8 @@ public class LearningSessionStore {
                                                       String subject,
                                                       LearningSessionType sessionType,
                                                       String learningGoal,
-                                                      String currentTopic) {
+                                                      String currentTopic,
+                                                      ConversationMode conversationMode) {
         LearningSessionEntity entity = new LearningSessionEntity();
         OffsetDateTime now = OffsetDateTime.now();
         entity.setConversationId(conversationId);
@@ -102,6 +114,7 @@ public class LearningSessionStore {
         entity.setSessionType(resolveSessionType(sessionType));
         entity.setLearningGoal(learningGoal);
         entity.setCurrentTopic(currentTopic);
+        entity.setConversationMode(resolveConversationMode(conversationMode, null));
         entity.setTurnCount(0);
         entity.setLastSummarizedTurn(0);
         entity.setProcessingRequestId(null);
@@ -120,12 +133,14 @@ public class LearningSessionStore {
                                                        String subject,
                                                        LearningSessionType sessionType,
                                                        String learningGoal,
-                                                       String currentTopic) {
+                                                       String currentTopic,
+                                                       ConversationMode conversationMode) {
         entity.setUserId(preferValue(userId, entity.getUserId()));
         entity.setSubject(preferValue(subject, entity.getSubject()));
         entity.setSessionType(resolveSessionType(sessionType));
         entity.setLearningGoal(preferValue(learningGoal, entity.getLearningGoal()));
         entity.setCurrentTopic(preferValue(currentTopic, entity.getCurrentTopic()));
+        entity.setConversationMode(resolveConversationMode(conversationMode, entity.getConversationMode()));
         entity.setStatus(LearningSessionStatus.ACTIVE.name());
         entity.setLastSummarizedTurn(defaultInteger(entity.getLastSummarizedTurn()));
         OffsetDateTime now = OffsetDateTime.now();
@@ -137,6 +152,28 @@ public class LearningSessionStore {
     // 把空 sessionType 统一归一化为 QA。
     private String resolveSessionType(LearningSessionType sessionType) {
         return (sessionType == null ? LearningSessionType.QA : sessionType).name();
+    }
+
+    private String resolveConversationMode(ConversationMode conversationMode, String existingValue) {
+        if (conversationMode != null) {
+            return conversationMode.name();
+        }
+        return existingValue == null || existingValue.isBlank()
+                ? ConversationMode.defaultMode().name()
+                : existingValue;
+    }
+
+    // conversationId 只能绑定一个用户，避免调用方误复用会话 ID 时污染他人上下文和长期记忆。
+    private Mono<Void> validateSessionOwner(LearningSessionEntity entity, String userId) {
+        if (entity == null || entity.getUserId() == null || entity.getUserId().isBlank()
+                || userId == null || userId.isBlank()
+                || entity.getUserId().equals(userId)) {
+            return Mono.empty();
+        }
+        return Mono.error(new IllegalStateException(
+                "Conversation owner mismatch for conversationId=%s, existingUserId=%s, requestUserId=%s"
+                        .formatted(entity.getConversationId(), entity.getUserId(), userId)
+        ));
     }
 
     // 只有新值非空时才覆盖旧值。
@@ -159,6 +196,7 @@ public class LearningSessionStore {
                 LearningSessionType.valueOf(entity.getSessionType()),
                 entity.getLearningGoal(),
                 entity.getCurrentTopic(),
+                ConversationMode.fromValue(entity.getConversationMode()),
                 entity.getTurnCount(),
                 defaultInteger(entity.getLastSummarizedTurn()),
                 entity.getProcessingRequestId(),

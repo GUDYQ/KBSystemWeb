@@ -1,23 +1,27 @@
 package org.example.kbsystemproject.ailearning.application.session;
 
 import lombok.extern.slf4j.Slf4j;
+import org.example.kbsystemproject.ailearning.domain.session.ConversationMode;
 import org.example.kbsystemproject.ailearning.domain.session.ConversationTurn;
 import org.example.kbsystemproject.ailearning.domain.session.LearningSessionRecord;
 import org.example.kbsystemproject.ailearning.domain.session.LongTermMemoryEntry;
 import org.example.kbsystemproject.ailearning.domain.session.SessionMemorySnapshot;
+import org.example.kbsystemproject.ailearning.domain.session.SessionWhiteboard;
 import org.example.kbsystemproject.ailearning.domain.session.SessionTopicBlock;
+import org.example.kbsystemproject.ailearning.domain.session.SessionTurnPair;
 import org.example.kbsystemproject.ailearning.domain.session.ToolExecutionTrace;
 import org.example.kbsystemproject.ailearning.domain.session.ToolMemoryEntry;
-import org.example.kbsystemproject.ailearning.domain.session.SessionTurnPair;
 import org.example.kbsystemproject.ailearning.infrastructure.memory.ConversationArchiveStore;
 import org.example.kbsystemproject.ailearning.infrastructure.memory.RedisShortTermMemoryStore;
 import org.example.kbsystemproject.ailearning.infrastructure.persistence.profile.LearningProfileTaskStore;
+import org.example.kbsystemproject.ailearning.infrastructure.persistence.session.MemoryItemStore;
 import org.example.kbsystemproject.ailearning.infrastructure.persistence.session.LearningSessionMemoryTaskStore;
 import org.example.kbsystemproject.ailearning.infrastructure.persistence.session.LearningSessionMessageStore;
 import org.example.kbsystemproject.ailearning.infrastructure.persistence.session.LearningSessionRequestStore;
 import org.example.kbsystemproject.ailearning.infrastructure.persistence.session.LearningSessionStore;
 import org.example.kbsystemproject.ailearning.infrastructure.persistence.session.LearningSessionToolTraceStore;
 import org.example.kbsystemproject.ailearning.infrastructure.persistence.session.LearningSessionTopicBlockStore;
+import org.example.kbsystemproject.ailearning.infrastructure.persistence.session.SessionWhiteboardStore;
 import org.example.kbsystemproject.config.MemoryProperties;
 import org.springframework.ai.chat.client.ChatClient;
 import org.springframework.ai.embedding.EmbeddingModel;
@@ -44,6 +48,8 @@ public class SessionStorageService {
     private final LearningProfileTaskStore learningProfileTaskStore;
     private final LearningSessionTopicBlockStore learningSessionTopicBlockStore;
     private final LearningSessionToolTraceStore learningSessionToolTraceStore;
+    private final SessionWhiteboardStore sessionWhiteboardStore;
+    private final MemoryItemStore memoryItemStore;
     private final RedisShortTermMemoryStore shortTermMemoryStore;
     private final ConversationArchiveStore conversationArchiveStore;
     private final EmbeddingModel embeddingModel;
@@ -60,6 +66,8 @@ public class SessionStorageService {
                                  LearningProfileTaskStore learningProfileTaskStore,
                                  LearningSessionTopicBlockStore learningSessionTopicBlockStore,
                                  LearningSessionToolTraceStore learningSessionToolTraceStore,
+                                 SessionWhiteboardStore sessionWhiteboardStore,
+                                 MemoryItemStore memoryItemStore,
                                  RedisShortTermMemoryStore shortTermMemoryStore,
                                  ConversationArchiveStore conversationArchiveStore,
                                  EmbeddingModel embeddingModel,
@@ -75,6 +83,8 @@ public class SessionStorageService {
         this.learningProfileTaskStore = learningProfileTaskStore;
         this.learningSessionTopicBlockStore = learningSessionTopicBlockStore;
         this.learningSessionToolTraceStore = learningSessionToolTraceStore;
+        this.sessionWhiteboardStore = sessionWhiteboardStore;
+        this.memoryItemStore = memoryItemStore;
         this.shortTermMemoryStore = shortTermMemoryStore;
         this.conversationArchiveStore = conversationArchiveStore;
         this.embeddingModel = embeddingModel;
@@ -93,7 +103,8 @@ public class SessionStorageService {
                 command.subject(),
                 command.sessionType(),
                 command.learningGoal(),
-                command.currentTopic()
+                command.currentTopic(),
+                command.conversationMode()
         );
     }
 
@@ -139,6 +150,42 @@ public class SessionStorageService {
         if (!memoryProperties.getLongTerm().isEnabled()) {
             return Mono.just(List.of());
         }
+        return learningSessionStore.getByConversationId(conversationId)
+                .flatMap(session -> getLongTermMemory(session, query))
+                .defaultIfEmpty(List.of());
+    }
+
+    public Mono<SessionWhiteboard> getWhiteboard(String conversationId) {
+        return sessionWhiteboardStore.findByConversationId(conversationId)
+                .defaultIfEmpty(SessionWhiteboard.empty(conversationId));
+    }
+
+    private Mono<List<LongTermMemoryEntry>> getLongTermMemory(LearningSessionRecord session, String query) {
+        if (session == null || !memoryProperties.getLongTerm().isEnabled()) {
+            return Mono.just(List.of());
+        }
+        // TEMPORARY 只保留会话级连续性，不读取长期记忆。
+        if (session.normalizedConversationMode() != ConversationMode.MEMORY_ENABLED) {
+            return Mono.just(List.of());
+        }
+        if (session.userId() == null || session.userId().isBlank()) {
+            return Mono.just(List.of());
+        }
+        return memoryItemStore.findRelevantItems(
+                        session.userId(),
+                        query,
+                        memoryProperties.getLongTerm().getTopK()
+                )
+                .flatMap(memoryItems -> {
+                    if (!memoryItems.isEmpty()) {
+                        return Mono.just(memoryItems);
+                    }
+                    // 新 memory_item 为空时回退到旧向量归档，便于平滑迁移老会话。
+                    return loadArchivedLongTermMemory(session.conversationId(), query);
+                });
+    }
+
+    private Mono<List<LongTermMemoryEntry>> loadArchivedLongTermMemory(String conversationId, String query) {
         if (query == null || query.isBlank()) {
             return Mono.just(List.of());
         }
@@ -159,17 +206,23 @@ public class SessionStorageService {
     public Mono<SessionMemorySnapshot> loadSnapshot(String conversationId, String query) {
         Mono<LearningSessionRecord> sessionMono = learningSessionStore.getByConversationId(conversationId).cache();
         Mono<List<ConversationTurn>> shortTermMono = sessionMono.flatMap(this::resolveShortTermMemory);
-        Mono<List<LongTermMemoryEntry>> longTermMono = getLongTermMemory(conversationId, query);
+        Mono<List<LongTermMemoryEntry>> longTermMono = sessionMono.flatMap(session -> getLongTermMemory(session, query));
+        Mono<SessionWhiteboard> whiteboardMono = getWhiteboard(conversationId);
         Mono<SessionTopicBlock> activeTopicBlockMono = memoryProperties.getCompression().isEnabled()
                 ? learningSessionTopicBlockStore.findActiveByConversationId(conversationId)
                 .defaultIfEmpty(new SessionTopicBlock(null, conversationId, null, "EMPTY", 0, 0, 0, 0, 0, 0, null, null))
                 : Mono.just(new SessionTopicBlock(null, conversationId, null, "EMPTY", 0, 0, 0, 0, 0, 0, null, null));
-        Mono<List<ToolMemoryEntry>> toolMemoryMono = learningSessionToolTraceStore
-                .loadRecentToolMemories(conversationId, 4)
-                .defaultIfEmpty(List.of());
+        Mono<List<ToolMemoryEntry>> toolMemoryMono = loadRecentToolMemories(conversationId, 4);
 
-        return Mono.zip(sessionMono, shortTermMono, longTermMono, activeTopicBlockMono, toolMemoryMono)
-                .map(tuple -> new SessionMemorySnapshot(tuple.getT1(), tuple.getT2(), tuple.getT3(), tuple.getT4(), tuple.getT5()));
+        return Mono.zip(sessionMono, shortTermMono, longTermMono, whiteboardMono, activeTopicBlockMono, toolMemoryMono)
+                .map(tuple -> new SessionMemorySnapshot(
+                        tuple.getT1(),
+                        tuple.getT2(),
+                        tuple.getT3(),
+                        tuple.getT4(),
+                        tuple.getT5(),
+                        tuple.getT6()
+                ));
     }
 
     // 以 learning_session.turn_count 作为权威轮次来源。
@@ -192,6 +245,11 @@ public class SessionStorageService {
     // 从数据库读取最近若干条消息，通常作为 Redis 失效时的回源结果。
     public Mono<List<ConversationTurn>> loadRecentTurns(String conversationId, int limit) {
         return learningSessionMessageStore.loadRecentTurns(conversationId, limit);
+    }
+
+    public Mono<List<ToolMemoryEntry>> loadRecentToolMemories(String conversationId, int limit) {
+        return learningSessionToolTraceStore.loadRecentToolMemories(conversationId, limit)
+                .defaultIfEmpty(List.of());
     }
 
     // 短期记忆写入的核心事务：分配 turnIndex、写消息表、投递异步任务、更新请求状态。

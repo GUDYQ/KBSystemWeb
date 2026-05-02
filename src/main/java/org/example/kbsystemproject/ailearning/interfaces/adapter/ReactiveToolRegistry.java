@@ -19,8 +19,7 @@ public class ReactiveToolRegistry {
 
     public void register(ToolCallback callback) {
         callbacks.add(callback);
-        Map<String, Object> metadata = resolveCallbackMetadata(callback);
-        String sourceType = callback instanceof AsyncMcpToolCallback ? "mcp_async" : "tool_callback";
+        ToolMetadata toolMetadata = resolveCallbackMetadata(callback);
         tools.put(callback.getToolDefinition().name(), new RegisteredTool(new ReactiveTool() {
             @Override
             public String getName() {
@@ -41,7 +40,7 @@ public class ReactiveToolRegistry {
             public Mono<String> execute(String toolInput, ToolContext context) {
                 return Mono.fromCallable(() -> callback.call(toolInput, context));
             }
-        }, sourceType, metadata));
+        }, toolMetadata.sourceType(), toolMetadata.metadata()));
     }
 
     /**
@@ -70,19 +69,33 @@ public class ReactiveToolRegistry {
         return new ToolRegistration(toolName, registeredTool.sourceType(), registeredTool.metadata());
     }
 
-    private Map<String, Object> resolveCallbackMetadata(ToolCallback callback) {
+    private ToolMetadata resolveCallbackMetadata(ToolCallback callback) {
         Map<String, Object> metadata = new LinkedHashMap<>();
         metadata.put("callbackClass", callback.getClass().getName());
-        if (callback instanceof AsyncMcpToolCallback asyncMcpToolCallback) {
+        String sourceType = "tool_callback";
+        ToolCallback metadataCallback = callback;
+        if (callback instanceof SkillToolCallback skillToolCallback) {
+            sourceType = "skill";
+            metadata.put("skillName", skillToolCallback.getSkillName());
+            metadataCallback = skillToolCallback.getDelegate();
+            metadata.put("delegateClass", metadataCallback.getClass().getName());
+        }
+        if (metadataCallback instanceof AsyncMcpToolCallback asyncMcpToolCallback) {
+            if (!"skill".equals(sourceType)) {
+                sourceType = "mcp_async";
+            }
             String originalToolName = asyncMcpToolCallback.getOriginalToolName();
             if (originalToolName != null && !originalToolName.isBlank()) {
                 metadata.put("originalToolName", originalToolName);
             }
         }
-        return Map.copyOf(metadata);
+        return new ToolMetadata(sourceType, Map.copyOf(metadata));
     }
 
     private record RegisteredTool(ReactiveTool tool, String sourceType, Map<String, Object> metadata) {
+    }
+
+    private record ToolMetadata(String sourceType, Map<String, Object> metadata) {
     }
 
     public record ToolRegistration(String toolName, String sourceType, Map<String, Object> metadata) {

@@ -15,6 +15,7 @@ public class TopicInferenceService {
         return inferTopic(
                 command.currentTopic(),
                 snapshot == null || snapshot.session() == null ? null : snapshot.session().currentTopic(),
+                snapshot == null || snapshot.whiteboard() == null ? null : snapshot.whiteboard().currentFocus(),
                 snapshot == null ? null : snapshot.activeTopicBlock(),
                 snapshot == null ? List.of() : snapshot.shortTermMemory(),
                 command.prompt()
@@ -23,11 +24,15 @@ public class TopicInferenceService {
 
     public String inferTopic(String explicitTopic,
                              String sessionCurrentTopic,
+                             String whiteboardFocus,
                              SessionTopicBlock activeTopicBlock,
                              List<ConversationTurn> recentTurns,
                              String prompt) {
         if (explicitTopic != null && !explicitTopic.isBlank()) {
             return explicitTopic.trim();
+        }
+        if (whiteboardFocus != null && !whiteboardFocus.isBlank()) {
+            return whiteboardFocus.trim();
         }
         if (activeTopicBlock != null && activeTopicBlock.topic() != null && !activeTopicBlock.topic().isBlank()) {
             return activeTopicBlock.topic().trim();

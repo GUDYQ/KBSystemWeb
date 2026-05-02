@@ -130,4 +130,5 @@ dependencies {
 
 tasks.named('test') {
     useJUnitPlatform()
+    systemProperty 'spring.ai.mcp.client.enabled', 'false'
 }

@@ -29,6 +29,20 @@ public class MemoryProperties {
         private int topK = 5;
         private double similarityThreshold = 0.45;
         private double timeDecayLambda = 0.03;
+        private int collectionTurns = 6;
+        private int collectionMinTokens = 180;
+        private int maxCandidatesPerTurn = 2;
+        private double explicitMinConfidence = 0.9;
+        private double structuredMinConfidence = 0.85;
+        private double behavioralMinConfidence = 0.9;
+        private double inferredMinConfidence = 0.95;
+        private int minEvidenceCount = 1;
+        private int inferredMinEvidenceCount = 2;
+        private int promotionBatchSize = 20;
+        private int promotionMinDistinctTurns = 2;
+        private int promotionMinDistinctSessions = 2;
+        private double recallMinConfidence = 0.85;
+        private int blankQueryTopK = 2;
     }
 
     @Data
@@ -42,6 +56,8 @@ public class MemoryProperties {
     public static class Compression {
         private boolean enabled = true;
         private int recentRawTurns = 6;
+        private int whiteboardRefreshTurns = 3;
+        private int whiteboardRefreshMinTokens = 120;
         private int shortTermTriggerTurns = 8;
         private int topicBlockMinTurns = 3;
         private double lowInfoRatioThreshold = 0.5;

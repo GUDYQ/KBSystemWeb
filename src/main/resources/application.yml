@@ -106,6 +106,20 @@ memory:
     top-k: 5
     similarity-threshold: 0.45
     time-decay-lambda: 0.03
+    collection-turns: 6
+    collection-min-tokens: 180
+    max-candidates-per-turn: 2
+    explicit-min-confidence: 0.9
+    structured-min-confidence: 0.85
+    behavioral-min-confidence: 0.9
+    inferred-min-confidence: 0.95
+    min-evidence-count: 1
+    inferred-min-evidence-count: 2
+    promotion-batch-size: 20
+    promotion-min-distinct-turns: 2
+    promotion-min-distinct-sessions: 2
+    recall-min-confidence: 0.85
+    blank-query-top-k: 2
   summary:
     enabled: false
     trigger-turns: 20
@@ -113,6 +127,8 @@ memory:
   compression:
     enabled: false
     recent-raw-turns: 6
+    whiteboard-refresh-turns: 3
+    whiteboard-refresh-min-tokens: 120
     short-term-trigger-turns: 8
     topic-block-min-turns: 3
     low-info-ratio-threshold: 0.5

@@ -2,6 +2,8 @@ package org.example.kbsystemproject.config.ai;
 
 import org.example.kbsystemproject.ailearning.agent.ReActAgent;
 import org.example.kbsystemproject.ailearning.interfaces.adapter.ReactiveToolAdapter;
+import org.example.kbsystemproject.ailearning.interfaces.adapter.SkillToolCallback;
+import org.example.kbsystemproject.ailearning.interfaces.adapter.SkillToolProvider;
 import org.example.kbsystemproject.ailearning.tool.FinishTool;
 import org.springframework.ai.chat.client.ChatClient;
 import org.springframework.ai.chat.model.ChatModel;
@@ -61,13 +63,15 @@ public class ModelConfig {
 
     @Bean
     public ChatClient agentChatClient(ChatModel chatModel,
-                                      ObjectProvider<ToolCallbackProvider> toolCallbackProviders) {
+                                      ObjectProvider<ToolCallbackProvider> toolCallbackProviders,
+                                      ObjectProvider<SkillToolProvider> skillToolProviders) {
         OpenAiChatOptions chatOptions = OpenAiChatOptions.builder()
                 .internalToolExecutionEnabled(Boolean.FALSE)
                 .build();
         ToolCallback finishToolCallback = new ReactiveToolAdapter(finishTool);
         List<ToolCallback> asyncMcpCallbacks = resolveAsyncMcpToolCallbacks(toolCallbackProviders);
-        List<ToolCallback> agentCallbacks = mergeToolCallbacks(finishToolCallback, asyncMcpCallbacks);
+        List<ToolCallback> skillCallbacks = resolveSkillToolCallbacks(skillToolProviders);
+        List<ToolCallback> agentCallbacks = mergeToolCallbacks(finishToolCallback, asyncMcpCallbacks, skillCallbacks);
         return ChatClient.builder(chatModel)
                 .defaultOptions(chatOptions)
                 .defaultSystem("""
@@ -83,11 +87,14 @@ public class ModelConfig {
     @Bean
     public ReActAgent reActAgent(@Qualifier("agentChatClient") ChatClient chatClient,
                                  @Qualifier("agentScheduler") Scheduler agentScheduler,
-                                 ObjectProvider<ToolCallbackProvider> toolCallbackProviders) {
+                                 ObjectProvider<ToolCallbackProvider> toolCallbackProviders,
+                                 ObjectProvider<SkillToolProvider> skillToolProviders) {
         List<ToolCallback> asyncMcpCallbacks = resolveAsyncMcpToolCallbacks(toolCallbackProviders);
+        List<ToolCallback> skillCallbacks = resolveSkillToolCallbacks(skillToolProviders);
+        List<ToolCallback> agentCallbacks = mergeToolCallbacks(asyncMcpCallbacks, skillCallbacks);
         return new ReActAgent(chatClient,
                 List.of(finishTool),
-                asyncMcpCallbacks,
+                agentCallbacks,
                 3,
                 agentScheduler);
     }
@@ -99,12 +106,40 @@ public class ModelConfig {
                 .toList();
     }
 
-    private List<ToolCallback> mergeToolCallbacks(ToolCallback primaryCallback, List<ToolCallback> extraCallbacks) {
+    private List<ToolCallback> resolveSkillToolCallbacks(ObjectProvider<SkillToolProvider> skillToolProviders) {
+        return skillToolProviders.orderedStream()
+                .flatMap(provider -> Arrays.stream(provider.getToolCallbacks())
+                        .map(callback -> (ToolCallback) new SkillToolCallback(provider.getSkillName(), callback)))
+                .toList();
+    }
+
+    @SafeVarargs
+    private final List<ToolCallback> mergeToolCallbacks(ToolCallback primaryCallback, List<ToolCallback>... extraCallbackGroups) {
         Map<String, ToolCallback> callbacks = new LinkedHashMap<>();
         callbacks.put(primaryCallback.getToolDefinition().name(), primaryCallback);
-        if (extraCallbacks != null) {
-            extraCallbacks.forEach(callback -> callbacks.putIfAbsent(callback.getToolDefinition().name(), callback));
+        if (extraCallbackGroups != null) {
+            for (List<ToolCallback> extraCallbacks : extraCallbackGroups) {
+                mergeToolCallbacks(callbacks, extraCallbacks);
+            }
         }
         return List.copyOf(callbacks.values());
+    }
+
+    @SafeVarargs
+    private final List<ToolCallback> mergeToolCallbacks(List<ToolCallback>... callbackGroups) {
+        Map<String, ToolCallback> callbacks = new LinkedHashMap<>();
+        if (callbackGroups != null) {
+            for (List<ToolCallback> callbackGroup : callbackGroups) {
+                mergeToolCallbacks(callbacks, callbackGroup);
+            }
+        }
+        return List.copyOf(callbacks.values());
+    }
+
+    private void mergeToolCallbacks(Map<String, ToolCallback> callbacks, List<ToolCallback> extraCallbacks) {
+        if (extraCallbacks == null) {
+            return;
+        }
+        extraCallbacks.forEach(callback -> callbacks.putIfAbsent(callback.getToolDefinition().name(), callback));
     }
 }

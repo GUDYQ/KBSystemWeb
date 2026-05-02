@@ -32,6 +32,7 @@ public class LearningPromptService {
     private static final String LEARNING_ASSISTANT_SYSTEM_PROMPT = """
             你是一个通用学习助手。
             回答时优先基于当前会话上下文、历史对话和长期记忆。
+            长期记忆只作为参考信号，不是绝对事实；如果它与当前用户这轮明确输入冲突，以当前输入为准。
             信息不足时直接说明缺失点，不要编造。
             输出尽量清晰、可执行，并与用户当前任务保持一致。
             """;
@@ -70,9 +71,11 @@ public class LearningPromptService {
         context.put("userId", command.userId());
         context.put("subject", command.subject());
         context.put("sessionType", decision.resolvedSessionType().name());
+        context.put("conversationMode", snapshot.session().normalizedConversationMode().name());
         context.put("learningGoal", command.learningGoal());
         context.put("currentTopic", command.currentTopic());
         context.put("turnCount", snapshot.session().turnCount());
+        context.put("whiteboard", formatWhiteboard(snapshot.whiteboard()));
         context.put("intentType", decision.intentType().name());
         context.put("executionMode", decision.executionMode().name());
         context.put("longTermMemory", snapshot.longTermMemory().stream()
@@ -124,6 +127,7 @@ public class LearningPromptService {
         metadata.put("subject", defaultText(command.subject()));
         metadata.put("sessionType", decision.resolvedSessionType().name());
         metadata.put("currentTopic", defaultText(command.currentTopic()));
+        metadata.put("conversationMode", command.conversationMode() == null ? null : command.conversationMode().name());
         metadata.put("sessionStatus", snapshot.session().status() == null
                 ? LearningSessionStatus.ACTIVE.name()
                 : snapshot.session().status().name());
@@ -158,6 +162,7 @@ public class LearningPromptService {
         builder.append("- userId: ").append(defaultText(command.userId())).append('\n');
         builder.append("- subject: ").append(defaultText(command.subject())).append('\n');
         builder.append("- sessionType: ").append(decision.resolvedSessionType().name()).append('\n');
+        builder.append("- conversationMode: ").append(snapshot.session().normalizedConversationMode().name()).append('\n');
         builder.append("- intentType: ").append(decision.intentType().name()).append('\n');
         builder.append("- executionMode: ").append(decision.executionMode().name()).append('\n');
         builder.append("- learningGoal: ").append(defaultText(command.learningGoal())).append('\n');
@@ -169,6 +174,8 @@ public class LearningPromptService {
         builder.append(buildIntentInstruction(decision));
         builder.append("\n用户个性化信息:\n");
         builder.append(formatLearningProfileContext(profileContext));
+        builder.append("\n当前会话白板:\n");
+        builder.append(formatWhiteboard(snapshot.whiteboard()));
         builder.append("\n当前主题块摘要:\n");
         builder.append(formatActiveTopicBlock(snapshot.activeTopicBlock()));
         builder.append("\n长期记忆:\n");
@@ -232,6 +239,42 @@ public class LearningPromptService {
         return builder.toString();
     }
 
+    private String formatWhiteboard(org.example.kbsystemproject.ailearning.domain.session.SessionWhiteboard whiteboard) {
+        if (whiteboard == null) {
+            return "无\n";
+        }
+        StringBuilder builder = new StringBuilder();
+        if (whiteboard.currentFocus() != null && !whiteboard.currentFocus().isBlank()) {
+            builder.append("- 当前焦点: ").append(whiteboard.currentFocus()).append('\n');
+        }
+        if (whiteboard.userGoal() != null && !whiteboard.userGoal().isBlank()) {
+            builder.append("- 用户目标: ").append(whiteboard.userGoal()).append('\n');
+        }
+        if (whiteboard.constraints() != null && !whiteboard.constraints().isEmpty()) {
+            builder.append("- 软提示: ").append(String.join(" | ", whiteboard.constraints())).append('\n');
+        }
+        if (whiteboard.decisions() != null && !whiteboard.decisions().isEmpty()) {
+            builder.append("- 已确认结论: ").append(String.join(" | ", whiteboard.decisions())).append('\n');
+        }
+        if (whiteboard.openQuestions() != null && !whiteboard.openQuestions().isEmpty()) {
+            builder.append("- 待解决问题: ").append(String.join(" | ", whiteboard.openQuestions())).append('\n');
+        }
+        if (whiteboard.recentToolFindings() != null && !whiteboard.recentToolFindings().isEmpty()) {
+            builder.append("- 工具发现: ").append(String.join(" | ", whiteboard.recentToolFindings())).append('\n');
+        }
+        if (whiteboard.continuityState() != null && !whiteboard.continuityState().isBlank()) {
+            builder.append("- 连续性判断: ").append(whiteboard.continuityState());
+            if (whiteboard.continuityConfidence() != null) {
+                builder.append(" (").append(String.format(java.util.Locale.ROOT, "%.2f", whiteboard.continuityConfidence())).append(')');
+            }
+            builder.append('\n');
+        }
+        if (whiteboard.rawSummary() != null && !whiteboard.rawSummary().isBlank()) {
+            builder.append("- 摘要: ").append(whiteboard.rawSummary()).append('\n');
+        }
+        return builder.isEmpty() ? "无\n" : builder.toString();
+    }
+
     private String formatLongTermMemory(List<LongTermMemoryEntry> memories) {
         if (memories == null || memories.isEmpty()) {
             return "无\n";
@@ -241,8 +284,19 @@ public class LearningPromptService {
             builder.append("- [")
                     .append(memory.memoryType())
                     .append("] ")
-                    .append(memory.content())
-                    .append('\n');
+                    .append(memory.content());
+            if (memory.score() != null) {
+                builder.append(" | confidence=")
+                        .append(String.format(java.util.Locale.ROOT, "%.2f", memory.score()));
+            }
+            Object sourceType = memory.metadata() == null ? null : memory.metadata().get("sourceType");
+            if (sourceType != null) {
+                builder.append(" | source=").append(sourceType);
+            }
+            if (memory.createdAt() != null) {
+                builder.append(" | lastSeen=").append(memory.createdAt());
+            }
+            builder.append('\n');
         }
         return builder.toString();
     }
@@ -366,4 +420,3 @@ public class LearningPromptService {
         return builder.toString();
     }
 }
-

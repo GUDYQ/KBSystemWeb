@@ -16,6 +16,7 @@ public class LearningSessionEntity {
     private String sessionType;
     private String learningGoal;
     private String currentTopic;
+    private String conversationMode;
     private Integer turnCount;
     private Integer lastSummarizedTurn;
     private String processingRequestId;
@@ -79,6 +80,14 @@ public class LearningSessionEntity {
 
     public void setCurrentTopic(String currentTopic) {
         this.currentTopic = currentTopic;
+    }
+
+    public String getConversationMode() {
+        return conversationMode;
+    }
+
+    public void setConversationMode(String conversationMode) {
+        this.conversationMode = conversationMode;
     }
 
     public Integer getTurnCount() {
